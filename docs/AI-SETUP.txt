@@ -1,0 +1,31 @@
+DropIt AI Search — setup
+=============================
+The new "Ask" tab finds files from plain-English prompts.
+It understands what's *in* your pictures, reads text inside images,
+and translates it to English. 100% on your PC: no accounts, no cloud.
+
+INSTALLED APP (DropIt.exe / installer)
+  Nothing to do — everything is already inside the app.
+  Open DropIt and use the Ask tab.
+
+RUNNING FROM SOURCE (python dropit.py / python app.py)
+  One-time install (about 450 MB):
+    pip install onnxruntime tokenizers numpy pypdf python-docx rapidocr-onnxruntime Pillow
+  The search models are already in this folder (ai_model/, ~170 MB).
+  Translation packs (~110 MB per language) download automatically
+  the first time you translate from that language, then work offline.
+
+HOW IT WORKS
+  When DropIt starts, it quietly loads the search models and reads
+  your shared files in the background — first search is instant.
+  New or changed files are picked up automatically.
+
+WHAT IT SEARCHES
+  File names + contents of .txt/.md/.pdf/.docx/code files.
+  Photos: objects/scenes ("motorcycle pic") and any text visible
+  in the image. Date words work: "yesterday", "last week",
+  "last month", "from 2024".
+
+IN THE CHAT
+  Image results show thumbnails. Tap 📝 on any image to have its
+  text transcribed into the chat, then 🌐 English to translate it.

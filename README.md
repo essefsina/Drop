@@ -1,55 +1,84 @@
-# 📥 DropIt
+# 📲 DropIt
 
-Beam files between your phone and PC over local WiFi. No cloud, no USB cable, no accounts.
+**Beam files from your phone to your PC over WiFi. No cloud, no accounts, no cables.**
 
-## 🖥️ Desktop app (recommended)
+DropIt turns your PC into a private file-drop server. Open the app, scan the QR code
+with your phone, and send photos, videos, documents, or text — they land straight
+in your shared folder. Everything stays on your local network.
 
-1. On your **Windows PC**, unzip this folder and double-click **`build.bat`**
-2. It installs everything and builds `dist\DropIt.exe` (takes a couple minutes the first time)
-3. Double-click `DropIt.exe` — a real native window opens, with a tray icon while it runs
+## ✨ Features
 
-The app shows a **QR code** — scan it with your phone camera and you're connected. The tray menu lets you reopen the window, copy the phone link, toggle **Start with Windows**, and quit.
+- **Phone → PC file transfer** over your WiFi — photos, videos, any files
+- **Shared Texts** — send snippets and notes between devices instantly
+- **Ask DropIt** — AI file search: find files from plain-English prompts
+  ("motorcycle pic", "email screenshot from last week")
+- **Sees inside images** — on-device vision finds objects and scenes in your photos
+- **Reads text in images** — OCR transcription, fully local
+- **Translates on-device** — foreign text detected and translated to English,
+  no cloud involved
+- **Native desktop app** — system tray, QR pairing, start-with-Windows
+- **Android app** — lightweight companion, same WiFi magic
 
-**Tray behavior:** the minimize button tucks DropIt into the system tray so transfers keep working in the background — no popups, no sounds. Clicking X exits the app for real. Double-click the tray icon (or choose **Open DropIt**) to bring the window back; **Quit DropIt** in the tray menu also exits. With **Start with Windows** on, DropIt launches silently into the tray on boot.
+## 🚀 Quickstart
 
-**File list:** images show thumbnails, and **Open** launches a file in its default app (the phone browser still downloads as before). Change the save folder any time with **Change...** next to **Open folder**.
+**Easiest — Windows installer:**
+Download `DropIt-Setup.exe` from the
+[latest release](https://github.com/essefsina/DropIt/releases/latest),
+run it, done.
 
-## 🐍 Quick run (no install)
-
-The core is still a single stdlib-only Python file — nothing to install:
+**From source:**
 
 ```bash
-python dropit.py
+git clone https://github.com/essefsina/DropIt.git
+cd DropIt
+pip install -r requirements.txt
+python src/dropit.py        # web UI (any browser)
+# or
+python src/app.py           # native desktop window
 ```
 
-Open the printed address (or scan the QR code) on your phone. Same WiFi required.
+Then on your phone, open the QR code shown and start sending.
 
-Options: `python dropit.py --port 9000 --dir ./shared`
+## 🧠 The AI part (100% local)
 
-## How it works
+Ask DropIt runs entirely on your PC — no accounts, no API keys, no cloud:
 
-- Phone → PC: drop files on the page (or tap to browse), watch the progress bar
-- PC → phone: use the Download button next to any file in the list
-- Files land in `~/DropIt`; duplicates get `(1)`, `(2)` suffixes instead of overwriting
-- Delete anything from the list when you're done
-
-## Notes
-
-- Both devices must be on the same WiFi network
-- Windows may ask for firewall permission on first run — allow it
-- The desktop window needs Microsoft Edge WebView2 (preinstalled on Windows 10/11)
-- LAN-only by design — don't expose it to the internet
-
-## Project layout
-
-| File | What it is |
+| Capability | How |
 |---|---|
-| `dropit.py` | The server + web UI. Stdlib only, runs anywhere |
-| `app.py` | Desktop shell: native window, tray icon, autostart |
-| `requirements.txt` | Desktop/build dependencies |
-| `build.bat` | One-click Windows build → `DropIt.exe` |
-| `icon.ico` / `icon.png` | App icon |
+| Semantic file search | Quantized MiniLM embeddings (`ai_model/`, ~23 MB) |
+| Photo understanding | Quantized CLIP vision model (~150 MB) |
+| Text in images | RapidOCR, on-device |
+| Translation | ONNX opus-mt pairs, downloaded once per language (~110 MB) |
 
-## Why it exists
+Translation packs download automatically the first time you translate from a
+language, then work offline forever. See [docs/AI-SETUP.txt](docs/AI-SETUP.txt).
 
-Emailing yourself photos is a crime against convenience. This kills it.
+## 📁 Project layout
+
+```
+DropIt/
+├── src/            # application source (dropit.py, app.py, dropit_ai.py, dropit_mt.py, stub.py)
+├── installer/      # Inno Setup installer + build scripts (Windows)
+├── docs/           # setup guides (INSTALLER.md, AI-SETUP.txt)
+├── assets/         # icons and artwork
+└── requirements.txt
+```
+
+## 🔨 Building the installer (Windows)
+
+```cmd
+cd installer
+build.bat
+```
+
+Needs Python 3 and [Inno Setup 6](https://jrsoftware.org/isdl.php).
+Outputs `DropIt-Setup.exe` — upload it to each GitHub Release.
+
+## 📱 Android
+
+The Android companion is built with a manual
+`aapt2`/`kotlinc`/`d8` pipeline (no Gradle) — see the release APKs.
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).

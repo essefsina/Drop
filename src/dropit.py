@@ -27,7 +27,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "2.7.43"
+VERSION = "2.7.71"
 
 _SVG_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>'
 _SVG_FOLDER_OPEN = '<svg viewBox="0 0 24 24"><path d="M2.5 6a2 2 0 0 1 2-2h4l2 2.5h9a2 2 0 0 1 2 2V9h-19V6z" fill="#fbbf24"/><path d="M2.5 9h19v9a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2V9z" fill="#ffedd5"/><path d="M2.5 12.5h19V18a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2v-5.5z" fill="#ffffff"/></svg>'
@@ -183,12 +183,20 @@ PAGE = """<!DOCTYPE html>
          height:100vh; height:100dvh; display:flex; flex-direction:column; }
   .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;
             flex-wrap:wrap; gap:10px; }
+  @media (min-width:721px){
+    .topbar { width:100%; margin:0 auto 10px; }
+  }
+  @media (min-width:721px) and (max-width:1083px){
+    .topbar { max-width:694px; }
+  }
+  @media (min-width:1084px){
+    .topbar { max-width:1048px; }
+  }
   .brand { display:flex; align-items:center; gap:13px; }
   .logo { width:46px; height:46px; border-radius:14px; background:linear-gradient(135deg,var(--acc),var(--acc2));
           display:flex; align-items:center; justify-content:center; font-size:25px;
           box-shadow:0 8px 24px rgba(56,189,248,.35); }
-  .logoimg { width:46px; height:46px; border-radius:14px;
-          box-shadow:0 8px 24px rgba(56,189,248,.35); }
+  .logoimg { width:46px; height:46px; display:block; }
   h1 { font-size:25px; letter-spacing:-.02em; }
   .ver { font-size:11px; color:var(--muted); border:1px solid var(--line); padding:3px 9px; border-radius:20px; }
   .status { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
@@ -254,6 +262,7 @@ PAGE = """<!DOCTYPE html>
   .up.err { color:var(--bad); }
   .frow { display:flex; align-items:center; gap:12px; padding:10px 8px; margin:0 -8px;
           border-top:1px solid var(--line); font-size:14px; border-radius:12px; transition:background .15s; }
+  .frowtop { display:flex; align-items:center; gap:12px; flex:1 1 auto; min-width:0; }
   .frow:first-child { border-top:none; }
   .frow:hover { background:rgba(34,211,238,.05); }
   .thumb { width:54px; height:54px; object-fit:cover; border-radius:12px; flex:none;
@@ -284,6 +293,66 @@ PAGE = """<!DOCTYPE html>
   .btn.dangergrad svg { width:15px; height:15px; flex:none; }
   .fstack { display:inline-flex; flex-direction:column; gap:6px; align-items:stretch; }
   .fstack .btn, .fstack .msavedbtn { width:100%; margin:0; }
+  /* inline file actions: compact, uncluttered */
+  .fact { display:flex; gap:6px; margin-left:auto; flex:none; }
+  .fact button { flex:none; width:32px; height:29px; box-sizing:border-box;
+    display:inline-flex; align-items:center; justify-content:center; padding:0;
+    background:linear-gradient(135deg,var(--c1,#7dd3fc),var(--c2,#4f46e5));
+    border:none; border-radius:10px; cursor:pointer; color:#0a0f1e; }
+  .fact button:active { filter:brightness(1.15); }
+  .fact button svg { width:15px; height:15px; display:block; }
+  .fact button .em { font-size:15px; line-height:1; }
+  .fact button.del { background:linear-gradient(135deg,#f87171,#ef4444); color:#0a0f1e; }
+  /* AI scanning spinner: shows while a new file is checked for text */
+  .fact .aiload { width:54px; height:29px; box-sizing:border-box; flex:none;
+    display:inline-flex; align-items:center; justify-content:center; }
+  .fact .aiload::after { content:""; width:16px; height:16px; border-radius:50%;
+    border:2px solid rgba(147,51,234,.25); border-top-color:#a855f7;
+    animation:aispin 0.8s linear infinite; }
+  @keyframes aispin { to { transform:rotate(360deg); } }
+  /* AI popup menu */
+  .aipop { position:fixed; z-index:1000; min-width:190px;
+    background:rgba(17,24,39,.97); border:1px solid rgba(147,51,234,.4);
+    border-radius:14px; padding:6px; box-shadow:0 12px 32px rgba(0,0,0,.5);
+    backdrop-filter:blur(8px); }
+  .aipop button { display:flex; align-items:center; gap:10px; width:100%;
+    background:none; border:none; color:#e5e7eb; font-size:14px; padding:10px 12px;
+    border-radius:10px; cursor:pointer; text-align:left; }
+  .aipop button:hover:not(:disabled) { background:rgba(147,51,234,.18); }
+  .aipop button:disabled { opacity:.38; cursor:not-allowed; }
+  .aipop button .em { font-size:17px; }
+  /* AI result modal */
+  .aimodalwrap { position:fixed; inset:0; z-index:1001; display:flex;
+    align-items:center; justify-content:center; padding:20px;
+    background:rgba(0,0,0,.6); backdrop-filter:blur(4px); }
+  .aimodal { max-width:560px; width:100%; max-height:80vh; display:flex; flex-direction:column;
+    background:#111827; border:1px solid rgba(147,51,234,.35); border-radius:18px;
+    box-shadow:0 24px 64px rgba(0,0,0,.6); overflow:hidden; }
+  .aimodal header { display:flex; align-items:center; justify-content:space-between;
+    padding:14px 18px; border-bottom:1px solid rgba(255,255,255,.08);
+    font-weight:700; font-size:15px; }
+  .aimodal header button { background:none; border:none; color:#9ca3af; font-size:20px;
+    cursor:pointer; padding:0 4px; }
+  .aimodal .abody { padding:18px; overflow-y:auto; white-space:pre-wrap;
+    font-size:14px; line-height:1.6; color:#e5e7eb;
+    user-select:text; -webkit-user-select:text; cursor:text; }
+  .aimodal header .ahbtns { display:flex; flex-direction:column; gap:6px; align-items:stretch; flex:none; margin-left:12px; }
+  .aimodal header .aclose { width:30px; height:30px; align-self:flex-end; display:inline-flex;
+    align-items:center; justify-content:center; padding:0; cursor:pointer;
+    background:linear-gradient(135deg,#f87171,#ef4444); border:none; border-radius:8px; color:#0a0f1e; }
+  .aimodal header .aclose svg { width:14px; height:14px; display:block; }
+  .aimodal header .aclose:active { filter:brightness(1.15); }
+  .aimodal header .acopy { font-size:13px; font-weight:700; color:#0a0f1e; white-space:nowrap;
+    background:linear-gradient(135deg,#22d3ee,#818cf8); border:none; border-radius:8px;
+    padding:7px 14px; cursor:pointer; font-family:inherit; }
+  .aimodal header .acopy:active { filter:brightness(1.15); }
+  /* AI-style bouncing dots while transcribing / translating */
+  .ailoading { display:inline-flex; gap:7px; align-items:center; padding:10px 2px; }
+  .ailoading i { width:9px; height:9px; border-radius:50%; background:#a855f7;
+    animation:ailbounce 1.2s infinite ease-in-out; }
+  .ailoading i:nth-child(2) { animation-delay:.15s; }
+  .ailoading i:nth-child(3) { animation-delay:.3s; }
+  @keyframes ailbounce { 0%,60%,100% { transform:translateY(0); opacity:.35; } 30% { transform:translateY(-8px); opacity:1; } }
   .empty { color:var(--muted); font-size:14px; padding:10px 4px; }
   .connectbar { display:flex; align-items:center; gap:8px; background:#090c15; border:1px solid var(--line);
          border-radius:999px; padding:6px 8px 6px 16px; }
@@ -350,6 +419,7 @@ PAGE = """<!DOCTYPE html>
           padding:7px 4px; background:linear-gradient(135deg,var(--c1,#22d3ee),var(--c2,#0ea5e9));
           border:none; border-radius:10px; cursor:pointer; color:#0a0f1e; }
   .nact button svg { width:15px; height:15px; display:block; }
+  .nact button .em { font-size:15px; line-height:1; }
   .nact button:active { filter:brightness(1.15); }
   .mdlg { display:none; position:fixed; inset:0; z-index:110; background:rgba(4,6,12,.82);
           align-items:center; justify-content:center; padding:22px; }
@@ -396,7 +466,9 @@ PAGE = """<!DOCTYPE html>
              height:calc(100vh - 330px); height:calc(100dvh - 330px); min-height:340px; }
     body[data-mtab="send"] .board .col,
     body[data-mtab="notes"] .board .col,
-    body[data-mtab="files"] .board .col { height:calc(100dvh - 205px); min-height:380px; }
+    body[data-mtab="files"] .board .col,
+    body[data-mtab="ask"] .board .col { height:calc(100dvh - 205px); min-height:380px; }
+    #askbtn { display:none; }
     footer { display:none; }
     .col[data-col="files"] #openfolder, .col[data-col="files"] #changefolder { display:none; }
     .board .col.active { display:flex; }
@@ -450,6 +522,38 @@ PAGE = """<!DOCTYPE html>
     .nact button svg { width:18px; height:18px; }
     .toast { bottom:calc(112px + env(safe-area-inset-bottom)); }
   }
+  .col[data-col="ask"] { display:none; }
+  .col[data-col="ask"] .colbody { overflow:hidden; }
+  .asklist { display:flex; flex-direction:column; gap:6px; flex:1; min-height:0; overflow-y:auto; padding:4px 2px; }
+  .amsg { max-width:88%; padding:10px 13px; border-radius:14px; font-size:14px; line-height:1.5; margin:2px 0; overflow-wrap:break-word; }
+  .amsg.bot { background:#151b31; border:1px solid var(--line); align-self:flex-start; border-bottom-left-radius:4px;
+    user-select:text; -webkit-user-select:text; cursor:text; }
+  .amsg.user { background:linear-gradient(135deg,#1d4ed8,#7c3aed); align-self:flex-end; border-bottom-right-radius:4px; }
+  .amsg code { display:block; background:#090c15; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:8px 0; font-size:12px; white-space:pre-wrap; word-break:break-all; font-family:ui-monospace,monospace; }
+  .ares { display:flex; align-items:center; gap:10px; background:#090c15; border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
+  .afic { font-size:22px; flex:none; }
+  .athumb { width:46px; height:46px; object-fit:cover; border-radius:9px; flex:none; border:1px solid var(--line); }
+  .afname { flex:1; min-width:0; font-weight:600; font-size:13.5px; word-break:break-all; }
+  .afsize { color:var(--muted); font-size:12px; flex:none; }
+  .abtn { flex:none; border:none; border-radius:9px; padding:8px 13px; font-size:13px; font-weight:700; cursor:pointer; color:#0a0f1e; background:linear-gradient(135deg,#22d3ee,#818cf8); font-family:inherit; }
+  .abtn2 { padding:8px 10px; }
+  .abtn:disabled { opacity:.45; }
+  .abtn:active { filter:brightness(1.15); }
+  .atyping { display:inline-flex; gap:4px; padding:6px 2px; }
+  .atyping i { width:7px; height:7px; border-radius:50%; background:var(--muted); animation:ablink 1.2s infinite; }
+  .atyping i:nth-child(2) { animation-delay:.2s; }
+  .atyping i:nth-child(3) { animation-delay:.4s; }
+  @keyframes ablink { 0%,60%,100% { opacity:.25; } 30% { opacity:1; } }
+  .askinput { display:flex; gap:8px; padding-top:10px; flex:none; }
+  .askinput input { flex:1; min-width:0; background:#090c15; border:1px solid var(--line); border-radius:12px; color:var(--txt); padding:11px 12px; font-size:15px; font-family:inherit; }
+  .askinput input:focus { outline:none; border-color:var(--acc); }
+  .askinput button { flex:none; width:46px; border-radius:12px; border:none; cursor:pointer; font-size:17px; color:#0a0f1e; background:linear-gradient(135deg,#22d3ee,#818cf8); }
+  .askinput button:disabled { opacity:.4; }
+  .askinput button:active { filter:brightness(1.15); }
+  .askpop { display:none; position:fixed; top:0; right:0; bottom:0; width:410px; max-width:94vw; z-index:90; background:rgba(9,12,21,.98); border-left:1px solid var(--line); padding:18px; box-sizing:border-box; }
+  .askpop.open { display:block; }
+  .askbox { display:flex; flex-direction:column; height:100%; min-height:0; }
+  .askhead { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; font-weight:700; font-size:15px; }
   .toast { position:fixed; bottom:26px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--card2);
            border:1px solid var(--acc); color:var(--txt); padding:11px 20px; border-radius:12px; font-size:14px;
            opacity:0; transition:.25s; pointer-events:none; z-index:120; max-width:92vw; text-align:center; }
@@ -464,7 +568,7 @@ PAGE = """<!DOCTYPE html>
          onerror="this.remove();document.getElementById('logofallback').style.display='flex';">
     <div class="logo" id="logofallback" style="display:none">&#x1F4E5;</div>
     <div><h1>DropIt</h1></div>
-    <span class="ver" title="build 2026-10-02 23:40">v__VERSION__</span>
+    <span class="ver" title="build 2026-10-15 22:30">v__VERSION__</span>
   </div>
   <div class="connectwrap">
     <div class="connectbar">
@@ -474,6 +578,7 @@ PAGE = """<!DOCTYPE html>
     <button class="qrmini" id="qrtoggle" title="Show large QR code">__QRMINI__</button>
   </div>
   <div class="status" id="statusdiv"><span class="dot" id="statusdot"></span><span id="statustext">No Devices Connected</span></div>
+  <button class="btn" id="askbtn" title="Ask DropIt to find a file">&#x1F50D; Ask</button>
 </div>
 <div class="qrpop" id="qrpop">__QR__
   <p class="hint">Open the address on your phone &mdash; both devices need the same WiFi.<br>First run may ask for firewall permission &mdash; allow it.</p>
@@ -559,16 +664,29 @@ PAGE = """<!DOCTYPE html>
     __FILEBTNS__
     <div class="colbody"><div id="files"><p class="empty">Loading&hellip;</p></div></div>
   </div>
+  <div class="col" data-col="ask">
+    <div class="colhead"><h2>&#x1F50D; Ask DropIt</h2></div>
+    <div class="colbody">
+      <div class="asklist" id="asklist"></div>
+      <div class="askinput"><input id="asktext" placeholder="Ask for a file&hellip;" autocomplete="off"><button id="asksend" title="Send">&#x27A4;</button></div>
+    </div>
+  </div>
 </div>
 
 <nav class="mtabs">
   <button class="mtab sel" data-tab="send"><span class="mi">&#x2B06;&#xFE0F;</span><span>Send</span></button>
   <button class="mtab" data-tab="notes"><span class="mi">&#x1F4AC;</span><span>Notes</span><span class="mcount" id="mnotecount"></span></button>
   <button class="mtab" data-tab="files"><span class="mi">&#x1F4C1;</span><span>Files</span><span class="mcount" id="mfilecount"></span></button>
+  <button class="mtab" data-tab="ask"><span class="mi">&#x1F50D;</span><span>Ask</span></button>
 </nav>
 
 <footer>DropIt &middot; Local only &middot; No cloud &middot; No accounts &middot; Just DropIt</footer>
 <div class="toast" id="toast"></div>
+<div class="askpop" id="askpop"><div class="askbox">
+  <div class="askhead"><span>&#x1F50D; Ask DropIt</span><button class="vclose" id="askclose">&#x2715;</button></div>
+  <div class="asklist" id="asklist2"></div>
+  <div class="askinput"><input id="asktext2" placeholder="Ask for a file&hellip;" autocomplete="off"><button id="asksend2" title="Send">&#x27A4;</button></div>
+</div></div>
 <div class="viewer" id="viewer"><div class="vbox">
   <div class="vhead"><span id="vtitle"></span><button class="vclose" id="vclose">&#x2715;</button></div>
   <div id="vcontent"></div>
@@ -870,10 +988,10 @@ async function clearPhoneCache(){
 
 function fileRowHtml(f){
   const ft = fileTime(f.ts || f.mtime);
-  return `<div class="frow"><span class="thwrap">${thumbFor(f.name)}${badgeFor(f.name)}</span>` +
+  return `<div class="frow"><div class="frowtop"><span class="thwrap">${thumbFor(f.name)}${badgeFor(f.name)}</span>` +
     `<span class="fmeta"><span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>` +
     `<span class="fsize">${fmt(f.size)}</span>` +
-    (ft ? `<span class="ftime">${ft}</span>` : "") + `</span>`;
+    (ft ? `<span class="ftime">${ft}</span>` : "") + `</span></div>`;
 }
 function showSaved(){
   const sfiles = Object.keys(DLSTATE).map(n => {
@@ -885,8 +1003,9 @@ function showSaved(){
   else html = `<button class="btn danger" id="vclear" style="margin-bottom:12px;width:100%;display:flex;align-items:center;justify-content:center;gap:8px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>Clear saved files</button>` +
     sfiles.map((f,i) =>
       fileRowHtml(f) +
-      `<button class="btn primary" data-sopen="${i}">Open</button>` +
-      `<button class="btn danger" data-sdel="${i}">Remove</button></div>`
+      `<span class="fact">` +
+      `<button data-sopen="${i}" title="Open" style="--c1:#7dd3fc;--c2:#4f46e5">${SVG.open}</button>` +
+      `<button class="del" data-sdel="${i}" title="Remove">${SVG.del}</button></span></div>`
     ).join("");
   showViewer("Saved on this phone", html);
   document.querySelectorAll("[data-sopen]").forEach(b =>
@@ -1118,12 +1237,23 @@ function linkify(s){
 }
 
 let lastFilesSig = null;
+// AI scan tracking: new files get a spinner until we know if they have text
+const seenFiles = new Set(), pendingAi = new Set(), aiReady = new Set();
 async function loadFiles(){
   const box = $("#files");
   try {
     const r = await fetch("/api/files"); const files = await r.json();
     const sig = files.map(f => f.name + "|" + f.size).join(";");
-    if(sig === lastFilesSig) return;   // unchanged: skip re-render so video thumbs never flicker
+    // track brand-new files for AI text scanning (even if list otherwise same)
+    let newOnes = false;
+    for(const f of files){
+      if(!seenFiles.has(f.name)){
+        seenFiles.add(f.name); newOnes = true;
+        if(!f.ai && !aiReady.has(f.name)) pendingAi.add(f.name);
+      }
+      if(f.ai) pendingAi.delete(f.name);
+    }
+    if(sig === lastFilesSig && !newOnes && !pendingAi.size) return;   // unchanged: skip re-render so video thumbs never flicker
     lastFilesSig = sig;
     $("#filecount").textContent = files.length || "";
     $("#mfilecount").textContent = files.length || "";
@@ -1131,14 +1261,44 @@ async function loadFiles(){
     if(!files.length){ box.innerHTML = '<p class="empty">Nothing here yet &mdash; beam something over from your phone.</p>'; return; }
     box.innerHTML = files.map((f,i) =>
       fileRowHtml(f) +
-      `<button class="btn primary" data-dl="${i}" data-name="${esc(f.name)}">${dlLabel(f)}</button>` +
-      `<button class="btn danger" data-del="${i}">Delete</button></div>`
+      `<span class="fact">` +
+      (f.ai || aiReady.has(f.name) ? `<button data-ai="${i}" title="AI tools" style="--c1:#a78bfa;--c2:#8b5cf6"><span class="em">✨</span></button>`
+        : pendingAi.has(f.name) ? `<span class="aiload" title="Scanning for text…"></span>` : "") +
+      `<button data-dl="${i}" data-name="${esc(f.name)}" title="Open" style="--c1:#7dd3fc;--c2:#4f46e5">${SVG.open}</button>` +
+      `<button class="del" data-del="${i}" title="Delete">${SVG.del}</button></span></div>`
     ).join("");
     box.querySelectorAll("[data-del]").forEach(b =>
       b.onclick = () => delFile(files[+b.dataset.del].name));
     box.querySelectorAll("[data-dl]").forEach(b =>
       b.onclick = () => fileTap(files[+b.dataset.dl], b));
+    box.querySelectorAll("[data-ai]").forEach(b =>
+      b.onclick = (e) => { e.stopPropagation(); openAiPopup(files[+b.dataset.ai].name, b); });
+    checkPendingAi();
   } catch(e){ box.innerHTML = '<p class="empty">Could not load file list.</p>'; }
+}
+
+// scan pending files for transcribable text; ✨ pops in as soon as text is found
+let _checkingAi = false;
+const _aiAttempts = {};
+async function checkPendingAi(){
+  if(_checkingAi || !pendingAi.size) return;
+  _checkingAi = true;
+  for(const name of [...pendingAi]){
+    _aiAttempts[name] = (_aiAttempts[name] || 0) + 1;
+    if(_aiAttempts[name] > 12){ pendingAi.delete(name); continue; }  // ~1 min, give up
+    try{
+      const r = await getJSON("/api/aicheck?name=" + encodeURIComponent(name));
+      if(r.ok && r.has_text){
+        pendingAi.delete(name); aiReady.add(name);
+        lastFilesSig = null; loadFiles();  // re-render to show ✨
+      }else if(r.ok){
+        pendingAi.delete(name);  // no text - drop the spinner
+        lastFilesSig = null; loadFiles();
+      }
+      // !r.ok: keep pending, retry next round
+    }catch(e){ /* keep pending, retry next round */ }
+  }
+  _checkingAi = false;
 }
 
 const ACCENTS = [
@@ -1228,6 +1388,80 @@ async function delFile(name){
   loadFiles(); toast("Deleted "+name);
 }
 
+/* ---- Shared Files AI popup: transcribe / translate ---- */
+let _aipop = null;
+function closeAiPopup(){ if(_aipop){ _aipop.remove(); _aipop = null; } }
+document.addEventListener("click", closeAiPopup);
+async function getJSON(url){ const r = await fetch(url); return r.json(); }
+
+async function openAiPopup(name, btn){
+  closeAiPopup();
+  // render instantly with Transcribe; Translate is appended in the
+  // background only when the text is foreign - popup never waits
+  const pop = document.createElement("div");
+  pop.className = "aipop";
+  pop.innerHTML = `<button data-act="transcribe"><span class="em">📝</span>Transcribe</button>`;
+  document.body.appendChild(pop);
+  const r = btn.getBoundingClientRect();
+  pop.style.top = Math.min(window.innerHeight - 170, r.bottom + 6) + "px";
+  pop.style.left = Math.max(8, r.left - 150) + "px";
+  _aipop = pop;
+  pop.addEventListener("click", e => e.stopPropagation());
+  pop.querySelectorAll("[data-act]").forEach(b =>
+    b.onclick = () => { closeAiPopup(); aiRun(name, b.dataset.act); });
+  getJSON("/api/aifileinfo?name=" + encodeURIComponent(name)).then(info => {
+    if(_aipop !== pop) return;  // user already closed it
+    if(info && info.lang && info.lang !== "en"){
+      const tb = document.createElement("button");
+      tb.dataset.act = "translate";
+      tb.innerHTML = `<span class="em">🌐</span>Translate`;
+      tb.onclick = () => { closeAiPopup(); aiRun(name, "translate"); };
+      pop.appendChild(tb);
+    }
+  }).catch(()=>{});
+}
+
+async function aiRun(name, act){
+  const titles = {transcribe: "📝 Transcription", translate: "🌐 Translation"};
+  showAiModal(titles[act] || "AI", name, AI_LOADING, true);
+  try{
+    let text = "";
+    if(act === "transcribe"){
+      const r = await getJSON("/api/aifiletext?name=" + encodeURIComponent(name));
+      if(!r.ok) throw new Error(r.message === "no_text" ? "No readable text found in that file." : "Couldn't read that file.");
+      text = r.text;
+    }else{
+      const t = await getJSON("/api/aifiletext?name=" + encodeURIComponent(name));
+      if(!t.ok || !t.text) throw new Error("No readable text found in that file.");
+      const resp = await fetch("/api/aitranslate", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({text: t.text})});
+      const r = await resp.json();
+      if(!r.ok) throw new Error(r.message === "no_pair" ? "Couldn't get the translation pack - check your internet and try again." : "Translation failed.");
+      if(r.message === "already_english") throw new Error("That's already English.");
+      text = (r.src && r.src !== "en" && r.src !== "auto" ? "[" + r.src + " → en] " : "") + r.text;
+    }
+    showAiModal(titles[act], name, text);
+  }catch(e){ showAiModal(titles[act] || "AI", name, "⚠️ " + (e.message || e)); }
+}
+
+const AI_LOADING = `<span class="ailoading"><i></i><i></i><i></i></span>`;
+function showAiModal(title, name, body, isHtml){
+  closeAiModal();
+  const w = document.createElement("div");
+  w.className = "aimodalwrap"; w.id = "_aimodal";
+  w.innerHTML = `<div class="aimodal"><header><span>${esc(title)} — ${esc(name)}</span><span class="ahbtns"><button class="aclose" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button><button class="acopy">Copy</button></span></header><div class="abody"></div></div>`;
+  const ab = w.querySelector(".abody");
+  if(isHtml) ab.innerHTML = body; else ab.textContent = body;
+  w.querySelector("header button.acopy").onclick = () => {
+    navigator.clipboard.writeText(ab.textContent).then(() => toast("Copied"), () => toast("Copy failed"));
+  };
+  w.querySelector("header button.aclose").onclick = closeAiModal;
+  w.addEventListener("click", e => { if(e.target === w) closeAiModal(); });
+  document.body.appendChild(w);
+}
+function closeAiModal(){ const m = $("#_aimodal"); if(m) m.remove(); }
+
 const mdlg = $("#mdlg"), mnote = $("#mnote");
 $("#maddnote").onclick = () => { mnote.value=""; mdlg.classList.add("open"); setTimeout(() => mnote.focus(), 60); };
 $("#mcancel").onclick = () => mdlg.classList.remove("open");
@@ -1252,9 +1486,167 @@ function setTab(name){
     c.classList.toggle("active", c.dataset.col === name));
   mtabs.forEach(t => t.classList.toggle("sel", t.dataset.tab === name));
   try { localStorage.setItem("dropit_tab", name); } catch(e){}
+  if(window._tabShown) window._tabShown(name);
 }
 mtabs.forEach(t => t.onclick = () => setTab(t.dataset.tab));
 try { setTab(localStorage.getItem("dropit_tab") || "send"); } catch(e){ setTab("send"); }
+
+/* Ask DropIt — retrieval chat veneer over /api/aisearch. Fixed templates only. */
+function AskChat(listId, inputId, sendId){
+  const list = document.getElementById(listId),
+        input = document.getElementById(inputId),
+        sendBtn = document.getElementById(sendId);
+  if(!list || !input || !sendBtn) return { greet(){} };
+  let greeted = false, busy = false;
+  const scroll = () => { list.scrollTop = list.scrollHeight; };
+  function addMsg(html, who){
+    const d = document.createElement("div");
+    d.className = "amsg " + who;
+    d.innerHTML = html;
+    list.appendChild(d); scroll();
+    return d;
+  }
+  const bot = html => addMsg(html, "bot");
+  function greet(){
+    if(greeted) return; greeted = true;
+    bot("Hi, what can I help you with today?");
+    checkComponents();
+  }
+  async function checkComponents(){
+    try {
+      const s = await getJSON("/api/aistatus");
+      if(!s || s.ok === false) return;
+      const missing = s.missing || [];
+      if(missing.length){
+        bot("Heads up: some AI features are off on your PC (missing: " + missing.map(esc).join(", ") + ").<br>Image reading, photo search and translation need:<br><code>pip install rapidocr-onnxruntime Pillow onnxruntime tokenizers</code><br>Run that on your PC, restart DropIt, and everything lights up.");
+      }
+    } catch(e){}
+  }
+  async function getJSON(url){
+    const r = await fetch(url);
+    return r.json();
+  }
+  function renderResults(r){
+    const n = (r.results || []).length;
+    if(!n){
+      bot("I couldn't find anything matching that. Try different words &mdash; I match meaning, not just filenames.");
+      return;
+    }
+    bot(n === 1 ? "Here is the file you requested." : "Here's what I found (" + n + "):");
+    r.results.forEach(f => {
+      const d = document.createElement("div");
+      d.className = "ares";
+      const isImg = !!f.image;
+      d.innerHTML = (isImg
+        ? '<img class="athumb" loading="lazy" src="/thumb/' + encodeURIComponent(f.name) + '" alt="" onerror="this.remove()">'
+        : '<span class="afic">' + iconFor(f.name) + '</span>') +
+        '<span class="afname">' + esc(f.name) + '</span>' +
+        '<span class="afsize">' + fmt(f.size) + '</span>' +
+        (isImg ? '<button class="abtn abtn2" type="button" title="Read text in image">&#x1F4DD;</button>' : '') +
+        '<button class="abtn" type="button">Open</button>';
+      list.appendChild(d);
+      d.querySelectorAll(".abtn").forEach(b => {
+        if(b.classList.contains("abtn2")) b.onclick = () => readText(f.name, b);
+        else b.onclick = () => openFile(f.name);
+      });
+    });
+    scroll();
+  }
+  async function readText(name, btn){
+    btn.disabled = true; btn.textContent = "\u2026";
+    try {
+      const r = await getJSON("/api/aiocr?name=" + encodeURIComponent(name));
+      if(r.ok && r.text){
+        const d = bot("<b>Text in " + esc(name) + ":</b><br>" + esc(r.text).replace(/\\n/g, "<br>"));
+        const cb = document.createElement("button");
+        cb.className = "abtn"; cb.type = "button"; cb.textContent = "📋 Copy";
+        cb.style.marginTop = "8px";
+        cb.onclick = () => navigator.clipboard.writeText(r.text).then(() => toast("Copied"), () => toast("Copy failed"));
+        d.appendChild(document.createElement("br")); d.appendChild(cb);
+        // translate button only for foreign text
+        if(r.lang && r.lang !== "en"){
+          const tb = document.createElement("button");
+          tb.className = "abtn"; tb.type = "button"; tb.textContent = "🌐 English";
+          tb.style.marginTop = "8px"; tb.style.marginLeft = "8px";
+          tb.onclick = () => translateText(r.text, tb);
+          d.appendChild(tb);
+        }
+        scroll();
+      } else if(r.message === "blank"){
+        bot("No readable text found in that image.");
+      } else if(r.message === "needs_setup"){
+        bot("Text reading needs one more package on your PC:<br><code>pip install rapidocr-onnxruntime Pillow</code>");
+      } else if(r.message === "error"){
+        bot("Reader hit an error: " + esc(r.note || "unknown") + "<br>Send me that text and I'll fix it.");
+      } else {
+        bot("Couldn't read that image.");
+      }
+    } catch(e){ bot("Couldn't read that image."); }
+    btn.disabled = false; btn.innerHTML = "&#x1F4DD;";
+  }
+  async function translateText(text, btn){
+    btn.disabled = true; btn.textContent = "\u2026";
+    try {
+      const resp = await fetch("/api/aitranslate", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({text: text})});
+      const r = await resp.json();
+      if(r.ok && r.message === "already_english"){
+        bot("That's already English.");
+      } else if(r.ok){
+        const d = bot("<b>English:</b><br>" + esc(r.text).replace(/\\n/g, "<br>"));
+        const cb = document.createElement("button");
+        cb.className = "abtn"; cb.type = "button"; cb.textContent = "📋 Copy";
+        cb.style.marginTop = "8px";
+        cb.onclick = () => navigator.clipboard.writeText(r.text).then(() => toast("Copied"), () => toast("Copy failed"));
+        d.appendChild(document.createElement("br")); d.appendChild(cb); scroll();
+      } else if(r.message === "no_pair"){
+        bot("No offline translation pack for that language yet &mdash; it downloads automatically (about 110 MB) the first time you translate it.");
+      } else {
+        bot("Couldn't translate that right now.");
+      }
+    } catch(e){ bot("Couldn't translate that right now."); }
+    btn.disabled = false; btn.textContent = "🌐 English";
+  }
+  async function doSearch(q){
+    let r;
+    try { r = await getJSON("/api/aisearch?q=" + encodeURIComponent(q)); }
+    catch(e){ r = { message:"error" }; }
+    const t = list.querySelector(".atyping");
+    if(t) t.closest(".amsg").remove();
+    if(!r || r.message === "error"){
+      bot("Something went wrong on the PC side. Try again in a moment.");
+    } else if(r.message === "needs_setup"){
+      bot("AI search needs a one-time setup on your PC (about 450 MB). Open a terminal there and run:<br><code>pip install onnxruntime tokenizers numpy pypdf python-docx rapidocr-onnxruntime Pillow langdetect</code><br>Then refresh this page and ask again.");
+    } else if(r.message === "no_model"){
+      bot("The search model folder is missing from the DropIt folder. Re-download the DropIt zip and try again.");
+    } else {
+      renderResults(r);
+    }
+    busy = false; sendBtn.disabled = false;
+  }
+  async function send(){
+    const q = input.value.trim();
+    if(!q || busy) return;
+    input.value = "";
+    addMsg(esc(q), "user");
+    busy = true; sendBtn.disabled = true;
+    addMsg('<span class="atyping"><i></i><i></i><i></i></span>', "bot");
+    doSearch(q);
+  }
+  sendBtn.onclick = send;
+  input.addEventListener("keydown", e => { if(e.key === "Enter") send(); });
+  return { greet };
+}
+const askMobile = AskChat("asklist", "asktext", "asksend");
+const askDesk = AskChat("asklist2", "asktext2", "asksend2");
+window._tabShown = n => { if(n === "ask") askMobile.greet(); };
+document.getElementById("askbtn").onclick = () => {
+  document.getElementById("askpop").classList.add("open");
+  askDesk.greet();
+};
+document.getElementById("askclose").onclick = () =>
+  document.getElementById("askpop").classList.remove("open");
 async function loadStatus(){
   try {
     const r = await fetch("/api/status"); const j = await r.json();
@@ -1330,7 +1722,10 @@ window.addEventListener("pywebviewready", () => {
     const sel = (window.getSelection() || "").toString();
     const card = e.target.closest ? e.target.closest(".snipcard") : null;
     const noteTextEl = card ? card.querySelector(".sniptext") : null;
-    if(!ed && !noteTextEl) return false;
+    const modalTextEl = e.target.closest ? e.target.closest(".abody") : null;
+    const chatTextEl = e.target.closest ? e.target.closest(".amsg.bot") : null;
+    const textEl = noteTextEl || modalTextEl || chatTextEl;
+    if(!ed && !textEl) return false;
     const cx = e.clientX, cy = e.clientY;
     const clipText = await readClip();
     ctx.innerHTML = "";
@@ -1355,7 +1750,8 @@ window.addEventListener("pywebviewready", () => {
         ed.dispatchEvent(new Event("input", {bubbles:true}));
       }, !clipText);
     } else {
-      addItem("Select all", () => selectElText(noteTextEl));
+      // read-only text (notes, AI results): Select all + Copy only, never Paste
+      addItem("Select all", () => selectElText(textEl));
       addItem("Copy", () => copyText(sel), !sel);
     }
     const x = Math.min(cx, window.innerWidth - 170);
@@ -1379,7 +1775,9 @@ window.addEventListener("pywebviewready", () => {
     if(e.button !== 2 || !isDesktop()) return;
     const ed = editableAt(e.target);
     const card = e.target.closest ? e.target.closest(".snipcard") : null;
-    if(!ed && !(card && card.querySelector(".sniptext"))) return;
+    const modal = e.target.closest ? e.target.closest(".abody") : null;
+    const chat = e.target.closest ? e.target.closest(".amsg.bot") : null;
+    if(!ed && !(card && card.querySelector(".sniptext")) && !modal && !chat) return;
     e.preventDefault();
     lastMenuAt = Date.now();
     showMenu(e);
@@ -1778,11 +2176,20 @@ class Handler(BaseHTTPRequestHandler):
                      if os.path.isfile(os.path.join(self.server.directory, n))]
             names.sort(key=lambda n: os.path.getmtime(os.path.join(self.server.directory, n)),
                        reverse=True)
+            ai_map = {}
+            try:
+                import dropit_ai
+                for name in names:
+                    ai_map[name] = dropit_ai.ai_eligible(
+                        self.server.directory, _data_dir(), name)
+            except Exception:  # noqa: BLE001 - AI optional
+                pass
             for name in names:
                 fp = os.path.join(self.server.directory, name)
                 items.append({"name": name,
                               "size": os.path.getsize(fp),
-                              "mtime": int(os.path.getmtime(fp))})
+                              "mtime": int(os.path.getmtime(fp)),
+                              "ai": bool(ai_map.get(name))})
             self._json(items)
         elif path == "/api/notes":
             with _notes_lock:
@@ -1790,6 +2197,112 @@ class Handler(BaseHTTPRequestHandler):
             self._json(notes)
         elif path == "/api/status":
             self._json({"devices": _device_count()})
+        elif path == "/api/aisearch":
+            q = ""
+            for part in query.split("&"):
+                k, _, v = part.partition("=")
+                if k == "q":
+                    q = urllib.parse.unquote(v)
+            try:
+                import dropit_ai
+                self._json(dropit_ai.search_files(self.server.directory,
+                                                  _data_dir(), q))
+            except Exception:  # noqa: BLE001 - AI optional, never break server
+                self._json({"ok": False, "results": [], "message": "error"})
+        elif path == "/api/aistatus":
+            try:
+                import dropit_ai
+                st = dropit_ai.index_status(self.server.directory, _data_dir())
+                st["ok"] = True
+                self._json(st)
+            except Exception:  # noqa: BLE001 - AI optional
+                self._json({"ok": False})
+        elif path == "/api/aicheck":
+            # on-demand text check for one file (drives the AI scan spinner)
+            name = ""
+            for part in query.split("&"):
+                k, _, v = part.partition("=")
+                if k == "name":
+                    name = urllib.parse.unquote(v)
+            try:
+                import dropit_ai
+                fp = os.path.join(self.server.directory, name)
+                if not os.path.isfile(fp):
+                    self._json({"ok": False, "has_text": False})
+                else:
+                    self._json({"ok": True, "has_text": bool(
+                        dropit_ai.file_has_text(
+                            self.server.directory, _data_dir(), name))})
+            except Exception:  # noqa: BLE001 - AI optional
+                self._json({"ok": False, "has_text": False})
+        elif path == "/api/aiocr":
+            name = ""
+            for part in query.split("&"):
+                k, _, v = part.partition("=")
+                if k == "name":
+                    name = urllib.parse.unquote(v)
+            try:
+                import dropit_ai
+                res = dropit_ai.ocr_image(self.server.directory, name)
+                # translate button only shows for foreign text
+                if res.get("ok") and res.get("text"):
+                    try:
+                        import dropit_mt
+                        res["lang"] = dropit_mt.detect_lang(res["text"])
+                    except Exception:  # noqa: BLE001 - AI optional
+                        res["lang"] = None
+                self._json(res)
+            except Exception:  # noqa: BLE001 - AI optional
+                self._json({"ok": False, "text": "", "message": "error"})
+        elif path == "/api/aifiletext":
+            # unified text for any file: OCR for images, extraction for docs
+            name = ""
+            for part in query.split("&"):
+                k, _, v = part.partition("=")
+                if k == "name":
+                    name = urllib.parse.unquote(v)
+            try:
+                import dropit_ai
+                fp = os.path.join(self.server.directory, name)
+                if not os.path.isfile(fp):
+                    self._json({"ok": False, "text": "",
+                                "message": "not_found"})
+                else:
+                    # full text, paragraph breaks preserved for readability
+                    text = dropit_ai.full_text(fp)
+                    text = re.sub(r"[ \t]+", " ", text)
+                    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+                    if text:
+                        self._json({"ok": True, "text": text,
+                                    "message": "ok"})
+                    else:
+                        self._json({"ok": False, "text": "",
+                                    "message": "no_text"})
+            except Exception:  # noqa: BLE001 - AI optional
+                self._json({"ok": False, "text": "", "message": "error"})
+        elif path == "/api/aifileinfo":
+            # {has_text, lang} — drives the AI popup (translate grey-out)
+            name = ""
+            for part in query.split("&"):
+                k, _, v = part.partition("=")
+                if k == "name":
+                    name = urllib.parse.unquote(v)
+            try:
+                import dropit_ai
+                import dropit_mt
+                has = dropit_ai.ai_eligible(
+                    self.server.directory, _data_dir(), name)
+                lang = None
+                if has:
+                    fp = os.path.join(self.server.directory, name)
+                    if os.path.isfile(fp):
+                        text = dropit_ai.extract_text(fp)
+                        text = re.sub(r"\s+", " ", text).strip()[:2000]
+                        if text:
+                            lang = dropit_mt.detect_lang(text)
+                self._json({"ok": True, "has_text": has, "lang": lang})
+            except Exception:  # noqa: BLE001 - AI optional
+                self._json({"ok": False, "has_text": False, "lang": None})
         elif path == "/api/notes/dl":
             qs = query
             nid = ""
@@ -1861,6 +2374,16 @@ class Handler(BaseHTTPRequestHandler):
                     f.write(content)
                 saved.append(os.path.basename(dest))
                 self.log_message("saved %s (%d bytes)", dest, len(content))
+            # index new files in the background so the AI button appears
+            # promptly for photos with text (frontend re-polls /api/files)
+            try:
+                import dropit_ai
+                threading.Thread(
+                    target=dropit_ai.build_index,
+                    args=(self.server.directory, _data_dir()),
+                    daemon=True).start()
+            except Exception:  # noqa: BLE001 - AI optional
+                pass
             self._json({"ok": True, "saved": saved})
         elif path == "/api/delete":
             try:
@@ -1936,6 +2459,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": ok}, 200 if ok else 404)
             except (json.JSONDecodeError, OSError):
                 self._json({"ok": False}, 400)
+        elif path == "/api/aitranslate":
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}")
+                text = data.get("text", "")
+                if not isinstance(text, str) or not text.strip():
+                    self._json({"ok": False, "message": "empty"}, 400)
+                    return
+                if len(text) > 20_000:
+                    self._json({"ok": False, "message": "too_long"}, 400)
+                    return
+                import dropit_mt
+                self._json(dropit_mt.translate_to_english(text, _data_dir()))
+            except (json.JSONDecodeError, OSError):
+                self._json({"ok": False, "message": "error"}, 400)
+            except Exception:  # noqa: BLE001 - AI optional
+                self._json({"ok": False, "message": "error"}, 500)
         else:
             self._send(404, b"not found", "text/plain")
 
@@ -1951,6 +2490,17 @@ def make_server(port: int, directory: str, desktop: bool = False) -> ThreadingHT
     return server
 
 
+def _preload_ai(directory):
+    """Load the AI search model and build the file index in the background
+    at startup, so the Ask tab answers instantly on first use.
+    Never breaks startup."""
+    try:
+        import dropit_ai
+        dropit_ai.build_index(directory, _data_dir())
+    except Exception:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser(description="DropIt - beam files phone <-> PC over WiFi")
     ap.add_argument("--port", type=int, default=8000)
@@ -1963,6 +2513,9 @@ def main():
     print(f"  On your phone, open:  {server.url}")
     print(f"  Files land in:        {server.directory}")
     print("  Stop with Ctrl+C\n")
+    # Warm up AI search in the background: model loads, index builds.
+    threading.Thread(target=_preload_ai, args=(server.directory,),
+                     daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

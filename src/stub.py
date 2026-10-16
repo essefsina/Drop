@@ -26,7 +26,7 @@ from tkinter import messagebox, ttk
 # (DropIt-Setup.exe) and this URL always serves the newest release:
 #     https://github.com/<your-username>/DropIt/releases/latest/download/DropIt-Setup.exe
 # ---------------------------------------------------------------------------
-DOWNLOAD_URL = "https://github.com/REPLACE-ME/DropIt/releases/latest/download/DropIt-Setup.exe"
+DOWNLOAD_URL = "https://github.com/essefsina/DropIt/releases/latest/download/DropIt-Setup.exe"
 
 SETUP_FILENAME = "DropIt-Setup.exe"
 CHUNK_SIZE = 256 * 1024

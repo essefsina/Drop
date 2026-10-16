@@ -60,10 +60,11 @@ def component_status():
     except ImportError:
         st["missing"].append("rapidocr-onnxruntime")
     try:
-        import langdetect  # noqa: F401
+        import onnxruntime  # noqa: F401
+        import tokenizers  # noqa: F401
         st["translate"] = True
     except ImportError:
-        st["missing"].append("langdetect")
+        st["missing"].append("onnxruntime/tokenizers")
     if not model_ready():
         st["missing"].append("ai_model/minilm files")
     return st
@@ -262,6 +263,41 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
 def _index_path(data_dir):
     return os.path.join(data_dir, "ai_index.pkl")
+
+
+def full_text(fpath):
+    """Complete readable text for one file (transcribe path). No 2000-char
+    cap, paragraph breaks preserved. Never raises."""
+    try:
+        ext = os.path.splitext(fpath)[1].lower()
+        if ext in IMAGE_EXTS:
+            return _ocr_text(fpath)
+        if ext == ".pdf":
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(fpath)
+                parts = []
+                for page in reader.pages[:100]:
+                    t = page.extract_text() or ""
+                    if t.strip():
+                        parts.append(t.strip())
+                return "\n\n".join(parts)
+            except Exception:
+                return ""
+        if ext == ".docx":
+            try:
+                import docx
+                doc = docx.Document(fpath)
+                return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            except Exception:
+                return ""
+        if ext in TEXT_EXTS:
+            with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                return f.read(500_000)
+        # fallback: route through the standard extractor
+        return extract_text(fpath)
+    except Exception:
+        return ""
 
 
 def extract_text(fpath):
@@ -684,39 +720,3 @@ def file_has_text(directory, data_dir, name):
     except Exception:
         return False
 
-
-def summarize_file(directory, data_dir, name, max_sentences=5):
-    """Extractive summary: top sentences by word-frequency score.
-    Retrieval-based, not generative. Never raises."""
-    try:
-        index = _load_index(data_dir)
-        fp = os.path.join(directory, name)
-        if not os.path.isfile(fp):
-            return {"ok": False, "text": "", "message": "not_found"}
-        text = extract_text(fp)
-        text = re.sub(r"\s+", " ", text).strip()
-        if not text:
-            return {"ok": False, "text": "", "message": "no_text"}
-        sents = re.split(r"(?<=[.!?])\s+", text)
-        sents = [s.strip() for s in sents if len(s.strip()) > 20]
-        if len(sents) <= max_sentences:
-            return {"ok": True, "text": text, "message": "ok"}
-        words = re.findall(r"[a-z0-9']+", text.lower())
-        freq = {}
-        for w in words:
-            if len(w) > 3:
-                freq[w] = freq.get(w, 0) + 1
-        scored = []
-        for i, s in enumerate(sents):
-            sw = re.findall(r"[a-z0-9']+", s.lower())
-            score = sum(freq.get(w, 0) for w in sw) / max(len(sw), 1)
-            # slight preference for early sentences
-            score *= 1.0 / (1 + i * 0.05)
-            scored.append((score, i, s))
-        scored.sort(reverse=True)
-        top = sorted(scored[:max_sentences], key=lambda t: t[1])
-        return {"ok": True, "text": " ".join(s for _, _, s in top),
-                "message": "ok"}
-    except Exception as e:  # noqa: BLE001
-        return {"ok": False, "text": "", "message": "error",
-                "detail": str(e)[:200]}

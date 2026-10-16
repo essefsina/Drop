@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# DropIt runtime / data
+ai_model/
+mt_models/
+*.log
+
+# Binaries and packages - ship via GitHub Releases, never commit
+*.zip
+*.exe
+*.apk
+dist/
+dist-installer/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
