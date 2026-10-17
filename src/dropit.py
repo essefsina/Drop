@@ -1433,10 +1433,32 @@ async function aiRun(name, act){
     }else{
       const t = await getJSON("/api/aifiletext?name=" + encodeURIComponent(name));
       if(!t.ok || !t.text) throw new Error("No readable text found in that file.");
-      const resp = await fetch("/api/aitranslate", {method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({text: t.text})});
-      const r = await resp.json();
+      // first use downloads a ~110 MB translation pack - poll for real
+      // progress so the modal shows bytes instead of a frozen loader
+      const _mb = b => (b / 1048576).toFixed(0) + " MB";
+      const _dlpoll = setInterval(async () => {
+        try{
+          const p = await getJSON("/api/aidl_progress");
+          const ks = p && p.downloads ? Object.keys(p.downloads) : [];
+          if(!ks.length) return;
+          const d = p.downloads[ks[0]];
+          const ab = document.querySelector("#_aimodal .abody");
+          if(!ab) return;
+          const pct = d.total ? Math.round(d.done / d.total * 100) : 0;
+          ab.innerHTML = '<div style="padding:20px 6px;text-align:center">' +
+            '<div style="font-size:15px;margin-bottom:12px">Downloading translation pack<br><span style="color:var(--muted);font-size:13px">' + esc(d.file || '') + ' &mdash; one-time download, about 110 MB per language</span></div>' +
+            '<div style="height:10px;background:var(--card2);border-radius:99px;overflow:hidden">' +
+            '<div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,var(--acc),var(--acc2));border-radius:99px;transition:width .4s"></div></div>' +
+            '<div style="margin-top:10px;font-size:13px;color:var(--muted)">' + (d.total ? _mb(d.done) + ' / ' + _mb(d.total) + ' (' + pct + '%)' : _mb(d.done) + ' downloaded&hellip;') + '</div></div>';
+        }catch(e){}
+      }, 500);
+      let r;
+      try{
+        const resp = await fetch("/api/aitranslate", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({text: t.text})});
+        r = await resp.json();
+      }finally{ clearInterval(_dlpoll); }
       if(!r.ok) throw new Error(r.message === "no_pair" ? "Couldn't get the translation pack - check your internet and try again." : "Translation failed.");
       if(r.message === "already_english") throw new Error("That's already English.");
       text = (r.src && r.src !== "en" && r.src !== "auto" ? "[" + r.src + " → en] " : "") + r.text;
@@ -2459,6 +2481,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": ok}, 200 if ok else 404)
             except (json.JSONDecodeError, OSError):
                 self._json({"ok": False}, 400)
+        elif path == "/api/aidl_progress":
+            try:
+                import dropit_mt
+                self._json({"ok": True,
+                            "downloads": dropit_mt.download_progress()})
+            except Exception:  # noqa: BLE001 - AI optional
+                self._json({"ok": False}, 500)
         elif path == "/api/aitranslate":
             try:
                 data = json.loads(self.rfile.read(length) or b"{}")
