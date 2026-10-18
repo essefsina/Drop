@@ -107,6 +107,18 @@ _PAIR_FILES = (
 
 _lock = threading.Lock()
 _sessions = {}  # pair -> _PairMT
+_dl_progress = {}  # pair -> {"file": str, "done": int, "total": int|None}
+
+
+def download_progress():
+    """Snapshot of any in-flight translation-pack downloads.
+
+    Returns {pair: {"file", "done", "total"}} — empty dict when idle.
+    Polled by the UI so a first-use pack download shows real progress
+    instead of a frozen loading state.
+    """
+    with _lock:
+        return {p: dict(s) for p, s in _dl_progress.items()}
 
 
 def _pair_dir(data_dir, pair):
@@ -115,14 +127,29 @@ def _pair_dir(data_dir, pair):
     return d
 
 
-def _download(url, dest, timeout=_DL_TIMEOUT):
+def _download(url, dest, timeout=_DL_TIMEOUT, progress=None):
+    """Download a file, optionally reporting progress.
+
+    progress(done_bytes, total_bytes_or_None) is called before the first
+    chunk and after every chunk so the UI can show bytes downloaded.
+    """
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=timeout) as r, open(dest, "wb") as f:
+        try:
+            total = int(r.headers.get("Content-Length") or 0) or None
+        except (TypeError, ValueError):
+            total = None
+        done = 0
+        if progress:
+            progress(done, total)
         while True:
             chunk = r.read(1024 * 256)
             if not chunk:
                 break
             f.write(chunk)
+            done += len(chunk)
+            if progress:
+                progress(done, total)
 
 
 def _ensure_pair(pair, data_dir):
@@ -140,7 +167,18 @@ def _ensure_pair(pair, data_dir):
         dest = os.path.join(d, local)
         if os.path.isfile(dest) and os.path.getsize(dest) > 0:
             continue
-        _download(f"{_HF}/{repo}/resolve/main/{remote}", dest)
+
+        def _report(done, total, _pair=pair, _local=local):
+            with _lock:
+                _dl_progress[_pair] = {"file": _local, "done": done,
+                                       "total": total}
+
+        try:
+            _download(f"{_HF}/{repo}/resolve/main/{remote}", dest,
+                      progress=_report)
+        finally:
+            with _lock:
+                _dl_progress.pop(pair, None)
     # Xenova's tokenizer.json ships a null precompiled normalizer that the
     # Rust tokenizers loader rejects - drop it once at download time.
     tj = os.path.join(d, "tokenizer.json")
