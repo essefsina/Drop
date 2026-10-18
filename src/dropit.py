@@ -1461,7 +1461,10 @@ async function aiRun(name, act){
       }finally{ clearInterval(_dlpoll); }
       if(!r.ok) throw new Error(r.message === "no_pair" ? "Couldn't get the translation pack - check your internet and try again." : "Translation failed.");
       if(r.message === "already_english") throw new Error("That's already English.");
-      text = (r.src && r.src !== "en" && r.src !== "auto" ? "[" + r.src + " → en] " : "") + r.text;
+      // mul = multilingual fallback pair, auto/empty = detection failed -
+      // show a friendly [auto → en] instead of a cryptic [mul → en] or nothing
+      const _srcLabel = (!r.src || r.src === "mul" || r.src === "auto") ? "auto" : r.src;
+      text = (r.src && r.src !== "en" ? "[" + _srcLabel + " → en] " : "") + r.text;
     }
     showAiModal(titles[act], name, text);
   }catch(e){ showAiModal(titles[act] || "AI", name, "⚠️ " + (e.message || e)); }
