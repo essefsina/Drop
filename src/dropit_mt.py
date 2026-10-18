@@ -130,16 +130,48 @@ def _pair_dir(data_dir, pair):
 def _download(url, dest, timeout=_DL_TIMEOUT, progress=None):
     """Download a file, optionally reporting progress.
 
+    Interrupted downloads resume: bytes already sitting in
+    `<dest>.part` are continued with an HTTP Range request instead of
+    being restarted from zero. If the server ignores the Range request,
+    the partial file is discarded and the download restarts cleanly.
+    The file only appears at `dest` once the download completes.
+
     progress(done_bytes, total_bytes_or_None) is called before the first
     chunk and after every chunk so the UI can show bytes downloaded.
     """
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as r, open(dest, "wb") as f:
+    part = dest + ".part"
+    start = os.path.getsize(part) if os.path.isfile(part) else 0
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if start:
+        headers["Range"] = "bytes=%d-" % start
+    try:
+        r = urllib.request.urlopen(
+            urllib.request.Request(url, headers=headers), timeout=timeout)
+    except urllib.error.HTTPError as e:
+        # 416 = our partial file is already the whole file - done.
+        if start and e.code == 416:
+            os.replace(part, dest)
+            if progress:
+                progress(start, start)
+            return
+        raise
+    with r, open(part, "ab" if start else "wb") as f:
+        status = getattr(r, "status", 200)
+        resumed = bool(start) and status == 206
+        if start and not resumed:
+            # Server ignored the Range request - start over.
+            f.truncate(0)
+            start = 0
         try:
-            total = int(r.headers.get("Content-Length") or 0) or None
-        except (TypeError, ValueError):
+            if resumed:
+                # Content-Range looks like "bytes 100-199/1000".
+                total = int(r.headers.get("Content-Range", "").rsplit("/", 1)[1])
+            else:
+                total = int(r.headers.get("Content-Length") or 0)
+            total = total or None
+        except (TypeError, ValueError, IndexError):
             total = None
-        done = 0
+        done = start
         if progress:
             progress(done, total)
         while True:
@@ -150,6 +182,7 @@ def _download(url, dest, timeout=_DL_TIMEOUT, progress=None):
             done += len(chunk)
             if progress:
                 progress(done, total)
+    os.replace(part, dest)
 
 
 def _ensure_pair(pair, data_dir):
