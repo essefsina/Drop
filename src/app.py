@@ -433,6 +433,7 @@ def start_tray(server, window=None):
 # ------------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(description="DropIt desktop app")
+    ap.add_argument("--version", action="version", version=f"DropIt {VERSION}")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--dir", default=None,
                     help="Save folder (overrides the remembered one)")
