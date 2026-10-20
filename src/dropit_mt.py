@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import threading
 import urllib.request
 
@@ -110,6 +111,30 @@ _sessions = {}  # pair -> _PairMT
 _dl_progress = {}  # pair -> {"file": str, "done": int, "total": int|None}
 
 
+class InsufficientDiskSpace(OSError):
+    """Raised when the disk can't fit a translation-pack download."""
+
+
+def _mb(n):
+    """Bytes -> '123 MB', for logs and user-facing messages."""
+    return "%d MB" % (n / 1048576)
+
+
+def _check_space(dest, need_bytes):
+    """Raise InsufficientDiskSpace when dest's disk can't fit need_bytes.
+
+    Skips the check when free space can't be determined - the download
+    itself will surface any real filesystem error.
+    """
+    try:
+        free = shutil.disk_usage(os.path.dirname(os.path.abspath(dest))).free
+    except OSError:
+        return
+    if free < need_bytes:
+        raise InsufficientDiskSpace(
+            "need %s free, only %s available" % (_mb(need_bytes), _mb(free)))
+
+
 def download_progress():
     """Snapshot of any in-flight translation-pack downloads.
 
@@ -155,12 +180,11 @@ def _download(url, dest, timeout=_DL_TIMEOUT, progress=None):
                 progress(start, start)
             return
         raise
-    with r, open(part, "ab" if start else "wb") as f:
+    with r:
         status = getattr(r, "status", 200)
         resumed = bool(start) and status == 206
         if start and not resumed:
             # Server ignored the Range request - start over.
-            f.truncate(0)
             start = 0
         try:
             if resumed:
@@ -172,16 +196,28 @@ def _download(url, dest, timeout=_DL_TIMEOUT, progress=None):
         except (TypeError, ValueError, IndexError):
             total = None
         done = start
-        if progress:
-            progress(done, total)
-        while True:
-            chunk = r.read(1024 * 256)
-            if not chunk:
-                break
-            f.write(chunk)
-            done += len(chunk)
+        print("[dropit_mt] downloading %s (%s)%s" %
+              (os.path.basename(dest),
+               _mb(total) if total else "size unknown",
+               " - resuming at %s" % _mb(start) if start else ""))
+        if total:
+            # Fail fast with a clear message instead of dying mid-download.
+            _check_space(dest, total - done)
+        with open(part, "ab" if start else "wb") as f:
+            if not resumed:
+                # Fresh "wb" truncates on open anyway; this clears a stale
+                # partial file when the server ignored our Range request.
+                f.truncate(0)
             if progress:
                 progress(done, total)
+            while True:
+                chunk = r.read(1024 * 256)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(done, total)
     os.replace(part, dest)
 
 
@@ -314,7 +350,7 @@ def translate_to_english(text, data_dir=None):
 
     Returns {"ok": True, "text": ..., "src": "es"} or
             {"ok": True, "text": ..., "src": "en", "message": "already_english"} or
-            {"ok": False, "message": "no_pair"|"error"|"empty"}.
+            {"ok": False, "message": "no_pair"|"no_space"|"error"|"empty"}.
     The language pair downloads once on first use (~110 MB per pair).
     """
     text = (text or "").strip()
@@ -327,6 +363,8 @@ def translate_to_english(text, data_dir=None):
     pair = _PAIR_FALLBACK.get(src, src or "mul")
     try:
         mt = _get_pair_mt(pair, data_dir)
+    except InsufficientDiskSpace:
+        return {"ok": False, "message": "no_space"}
     except Exception:
         return {"ok": False, "message": "no_pair"}
     try:

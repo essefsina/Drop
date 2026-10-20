@@ -1421,6 +1421,13 @@ async function openAiPopup(name, btn){
   }).catch(()=>{});
 }
 
+// Friendly one-liners for the translation API's machine-readable messages.
+function _aiErrMsg(m){
+  return {no_pair: "Couldn't get the translation pack - check your internet and try again.",
+    no_space: "Not enough free space on the PC for the translation pack (about 110 MB per language). Free some space and try again.",
+    rate_limited: "Too many translations at once - wait a minute and try again."}[m] || "Translation failed.";
+}
+
 async function aiRun(name, act){
   const titles = {transcribe: "📝 Transcription", translate: "🌐 Translation"};
   showAiModal(titles[act] || "AI", name, AI_LOADING, true);
@@ -1459,7 +1466,7 @@ async function aiRun(name, act){
           body: JSON.stringify({text: t.text})});
         r = await resp.json();
       }finally{ clearInterval(_dlpoll); }
-      if(!r.ok) throw new Error(r.message === "no_pair" ? "Couldn't get the translation pack - check your internet and try again." : "Translation failed.");
+      if(!r.ok) throw new Error(_aiErrMsg(r.message));
       if(r.message === "already_english") throw new Error("That's already English.");
       // mul = multilingual fallback pair, auto/empty = detection failed -
       // show a friendly [auto → en] instead of a cryptic [mul → en] or nothing
@@ -1627,6 +1634,8 @@ function AskChat(listId, inputId, sendId){
         d.appendChild(document.createElement("br")); d.appendChild(cb); scroll();
       } else if(r.message === "no_pair"){
         bot("No offline translation pack for that language yet &mdash; it downloads automatically (about 110 MB) the first time you translate it.");
+      } else if(r.message === "no_space"){
+        bot("Not enough free space on the PC for the translation pack (about 110 MB per language). Free some space and try again.");
       } else {
         bot("Couldn't translate that right now.");
       }
