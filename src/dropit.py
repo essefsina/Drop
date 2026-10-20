@@ -346,6 +346,10 @@ PAGE = """<!DOCTYPE html>
     background:linear-gradient(135deg,#22d3ee,#818cf8); border:none; border-radius:8px;
     padding:7px 14px; cursor:pointer; font-family:inherit; }
   .aimodal header .acopy:active { filter:brightness(1.15); }
+  .aimodal header .apacks { font-size:13px; font-weight:700; color:#0a0f1e; white-space:nowrap;
+    background:linear-gradient(135deg,#fbbf24,#f97316); border:none; border-radius:8px;
+    padding:7px 14px; cursor:pointer; font-family:inherit; }
+  .aimodal header .apacks:active { filter:brightness(1.15); }
   /* AI-style bouncing dots while transcribing / translating */
   .ailoading { display:inline-flex; gap:7px; align-items:center; padding:10px 2px; }
   .ailoading i { width:9px; height:9px; border-radius:50%; background:#a855f7;
@@ -1475,17 +1479,32 @@ function showAiModal(title, name, body, isHtml){
   closeAiModal();
   const w = document.createElement("div");
   w.className = "aimodalwrap"; w.id = "_aimodal";
-  w.innerHTML = `<div class="aimodal"><header><span>${esc(title)} — ${esc(name)}</span><span class="ahbtns"><button class="aclose" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button><button class="acopy">Copy</button></span></header><div class="abody"></div></div>`;
+  w.innerHTML = `<div class="aimodal"><header><span>${esc(title)} — ${esc(name)}</span><span class="ahbtns"><button class="aclose" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button><button class="acopy">Copy</button><button class=\"apacks\" title=\"Cached translation packs\">Packs</button></span></header><div class="abody"></div></div>`;
   const ab = w.querySelector(".abody");
   if(isHtml) ab.innerHTML = body; else ab.textContent = body;
   w.querySelector("header button.acopy").onclick = () => {
     navigator.clipboard.writeText(ab.textContent).then(() => toast("Copied"), () => toast("Copy failed"));
   };
   w.querySelector("header button.aclose").onclick = closeAiModal;
+  w.querySelector("header button.apacks").onclick = aiPacks;
   w.addEventListener("click", e => { if(e.target === w) closeAiModal(); });
   document.body.appendChild(w);
 }
 function closeAiModal(){ const m = $("#_aimodal"); if(m) m.remove(); }
+
+// Translation-pack maintenance: list cached packs and offer to clear them.
+async function aiPacks(){
+  const mb = b => (b / 1048576).toFixed(1) + " MB";
+  try{
+    const p = await getJSON("/api/mtpacks");
+    if(!p.ok || !p.packs.length){ toast("No translation packs cached"); return; }
+    const lines = p.packs.map(x => x.pair + " (" + mb(x.bytes) + ")").join(", ");
+    if(!confirm("Delete " + p.packs.length + " cached translation pack(s) (" + lines + ", " + mb(p.total_bytes) + " total)? They re-download automatically the next time you translate.")) return;
+    const r = await fetch("/api/mtpacks/clear", {method: "POST"});
+    const j = await r.json();
+    toast(j.ok ? "Cleared packs - freed " + mb(j.bytes) : "Couldn't clear packs");
+  }catch(e){ toast("Couldn't clear packs"); }
+}
 
 const mdlg = $("#mdlg"), mnote = $("#mnote");
 $("#maddnote").onclick = () => { mnote.value=""; mdlg.classList.add("open"); setTimeout(() => mnote.focus(), 60); };
@@ -2369,6 +2388,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, b"cannot preview", "text/plain")
                 return
             self._send(200, converted.encode("utf-8"), "text/html; charset=utf-8")
+        elif path == "/api/mtpacks":
+            try:
+                import dropit_mt
+                packs = dropit_mt.pack_info(_data_dir())
+                self._json({"ok": True, "packs": packs,
+                            "total_bytes": sum(p["bytes"] for p in packs)})
+            except Exception:  # noqa: BLE001 - AI optional
+                self._json({"ok": False}, 500)
         elif path.startswith("/dl/"):
             name = safe_name(urllib.parse.unquote(path[len("/dl/"):]))
             path = os.path.join(self.server.directory, name)
@@ -2489,6 +2516,14 @@ class Handler(BaseHTTPRequestHandler):
                 import dropit_mt
                 self._json({"ok": True,
                             "downloads": dropit_mt.download_progress()})
+            except Exception:  # noqa: BLE001 - AI optional
+                self._json({"ok": False}, 500)
+        elif path == "/api/mtpacks/clear":
+            try:
+                import dropit_mt
+                cleared = dropit_mt.clear_packs(_data_dir())
+                self._json({"ok": True, "pairs": cleared["pairs"],
+                            "bytes": cleared["bytes"]})
             except Exception:  # noqa: BLE001 - AI optional
                 self._json({"ok": False}, 500)
         elif path == "/api/aitranslate":
