@@ -1,8 +1,8 @@
-# 📲 DropIt
+# 📲 Drop
 
 **Beam files from your phone to your PC over WiFi. No cloud, no accounts, no cables.**
 
-DropIt turns your PC into a private file-drop server. Open the app, scan the QR code
+Drop turns your PC into a private file-drop server. Open the app, scan the QR code
 with your phone, and send photos, videos, documents, or text — they land straight
 in your shared folder. Everything stays on your local network.
 
@@ -10,7 +10,7 @@ in your shared folder. Everything stays on your local network.
 
 - **Phone → PC file transfer** over your WiFi — photos, videos, any files
 - **Shared Texts** — send snippets and notes between devices instantly
-- **Ask DropIt** — AI file search: find files from plain-English prompts
+- **Ask Drop** — AI file search: find files from plain-English prompts
   ("motorcycle pic", "email screenshot from last week")
 - **Sees inside images** — on-device vision finds objects and scenes in your photos
 - **Reads text in images** — OCR transcription, fully local
@@ -23,14 +23,14 @@ in your shared folder. Everything stays on your local network.
 
 **Easiest — Windows installer:**
 Download `DropIt-Setup.exe` from the
-[latest release](https://github.com/essefsina/DropIt/releases/latest),
+[latest release](https://github.com/essefsina/Drop/releases/latest),
 run it, done.
 
 **From source:**
 
 ```bash
-git clone https://github.com/essefsina/DropIt.git
-cd DropIt
+git clone https://github.com/essefsina/Drop.git
+cd Drop
 pip install -r requirements.txt
 python src/dropit.py        # web UI (any browser)
 # or
@@ -41,7 +41,7 @@ Then on your phone, open the QR code shown and start sending.
 
 ## 🧠 The AI part (100% local)
 
-Ask DropIt runs entirely on your PC — no accounts, no API keys, no cloud:
+Ask Drop runs entirely on your PC — no accounts, no API keys, no cloud:
 
 | Capability | How |
 |---|---|
@@ -56,7 +56,7 @@ language, then work offline forever. See [docs/AI-SETUP.txt](docs/AI-SETUP.txt).
 ## 📁 Project layout
 
 ```
-DropIt/
+Drop/
 ├── src/            # application source (dropit.py, app.py, dropit_ai.py, dropit_mt.py, stub.py)
 ├── installer/      # Inno Setup installer + build scripts (Windows)
 ├── docs/           # setup guides (INSTALLER.md, AI-SETUP.txt)
