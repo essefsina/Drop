@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import threading
 import urllib.request
 
@@ -337,3 +338,38 @@ def translate_to_english(text, data_dir=None):
         return {"ok": True, "text": text, "src": src or "auto",
                 "message": "already_english"}
     return {"ok": True, "text": out, "src": src or pair}
+
+
+def pack_info(data_dir):
+    """List cached translation packs as [{"pair": str, "bytes": int}]."""
+    root = os.path.join(data_dir or ".", "mt_models")
+    out = []
+    if os.path.isdir(root):
+        for pair in sorted(os.listdir(root)):
+            d = os.path.join(root, pair)
+            if not os.path.isdir(d):
+                continue
+            total = 0
+            for base, _ds, files in os.walk(d):
+                for fn in files:
+                    try:
+                        total += os.path.getsize(os.path.join(base, fn))
+                    except OSError:
+                        pass
+            out.append({"pair": pair, "bytes": total})
+    return out
+
+
+def clear_packs(data_dir):
+    """Delete all cached translation packs.
+
+    Returns {"pairs": [...], "bytes": freed}. Loaded sessions are dropped
+    too, so the next translation re-downloads its pair on demand.
+    """
+    packs = pack_info(data_dir)
+    freed = sum(p["bytes"] for p in packs)
+    shutil.rmtree(os.path.join(data_dir or ".", "mt_models"),
+                  ignore_errors=True)
+    with _lock:
+        _sessions.clear()
+    return {"pairs": [p["pair"] for p in packs], "bytes": freed}
