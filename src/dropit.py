@@ -64,6 +64,38 @@ def _device_count():
             del _seen_ips[ip]
         return len(_seen_ips)
 
+
+# --- /api/aitranslate rate limiting ---------------------------------------
+# Translation is the heaviest endpoint (model inference, plus a ~110 MB
+# pack download on first use), so each client IP gets a sliding window.
+# Loopback is never limited - local testing and the desktop app itself
+# shouldn't trip the guard.
+_AIT_LIMIT = 10    # max translations ...
+_AIT_WINDOW = 60.0  # ... per this many seconds
+_ait_lock = threading.Lock()
+_ait_hits = {}  # ip -> [timestamps of recent calls]
+
+
+def _ait_allowed(ip):
+    """Sliding-window rate limiter for /api/aitranslate.
+
+    Returns True when this call may proceed, False when the IP has used
+    up its window.
+    """
+    if ip in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+        return True
+    now = time.time()
+    with _ait_lock:
+        hits = [t for t in _ait_hits.get(ip, []) if now - t < _AIT_WINDOW]
+        if len(hits) >= _AIT_LIMIT:
+            _ait_hits[ip] = hits
+            return False
+        hits.append(now)
+        _ait_hits[ip] = hits
+        if len(_ait_hits) > 512:  # don't let the table grow forever
+            _ait_hits.pop(next(iter(_ait_hits)))
+        return True
+
 def _data_dir():
     if sys.platform == "win32":
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
@@ -2492,6 +2524,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001 - AI optional
                 self._json({"ok": False}, 500)
         elif path == "/api/aitranslate":
+            if not _ait_allowed(self.client_address[0]):
+                self._json({"ok": False, "message": "rate_limited"}, 429)
+                return
             try:
                 data = json.loads(self.rfile.read(length) or b"{}")
                 text = data.get("text", "")
