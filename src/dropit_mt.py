@@ -11,6 +11,7 @@ Only needs onnxruntime + tokenizers + numpy (already bundled for AI search).
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import os
 import re
@@ -40,8 +41,12 @@ _COMMON = {
 _COMMON_SETS = {l: set(w.split()) for l, w in _COMMON.items()}
 
 
-def _script_lang(text):
-    """Definitive for non-Latin scripts via Unicode ranges."""
+def _script_lang(text: str) -> str | None:
+    """Identify the language of non-Latin scripts via Unicode ranges.
+
+    Returns an ISO-639-1 code when a script is dominant in the text,
+    otherwise None (Latin scripts need the word-frequency fallback).
+    """
     cjk = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
     kana = sum(1 for c in text if "\u3040" <= c <= "\u30ff")
     hangul = sum(1 for c in text if "\uac00" <= c <= "\ud7a3")
@@ -67,8 +72,14 @@ def _script_lang(text):
     return None
 
 
-def detect_lang(text):
-    """Return ISO-639-1 code or None. Offline-capable."""
+def detect_lang(text: str | None) -> str | None:
+    """Return the ISO-639-1 language code for the text, or None if unsure.
+
+    Runs fully offline. Non-Latin scripts are identified by Unicode ranges
+    (definitive); Latin scripts fall back to common-word frequency scoring.
+    Returns None for empty text or when no language has a clear majority —
+    callers treat that as "unknown", never as English.
+    """
     t = (text or "").strip().lower()
     if not t:
         return None
@@ -110,24 +121,26 @@ _sessions = {}  # pair -> _PairMT
 _dl_progress = {}  # pair -> {"file": str, "done": int, "total": int|None}
 
 
-def download_progress():
+def download_progress() -> dict[str, dict[str, str | int | None]]:
     """Snapshot of any in-flight translation-pack downloads.
 
-    Returns {pair: {"file", "done", "total"}} — empty dict when idle.
-    Polled by the UI so a first-use pack download shows real progress
-    instead of a frozen loading state.
+    Returns {pair: {"file": str, "done": int, "total": int|None}} —
+    an empty dict when idle. Polled by the UI so a first-use pack
+    download shows real progress instead of a frozen loading state.
     """
     with _lock:
         return {p: dict(s) for p, s in _dl_progress.items()}
 
 
-def _pair_dir(data_dir, pair):
+def _pair_dir(data_dir: str | None, pair: str) -> str:
+    """Directory the ONNX files for one language pair live in (created)."""
     d = os.path.join(data_dir or ".", "mt_models", pair)
     os.makedirs(d, exist_ok=True)
     return d
 
 
-def _download(url, dest, timeout=_DL_TIMEOUT, progress=None):
+def _download(url: str, dest: str, timeout: int = _DL_TIMEOUT,
+              progress: Callable[[int, int | None], None] | None = None) -> None:
     """Download a file, optionally reporting progress.
 
     Interrupted downloads resume: bytes already sitting in
@@ -138,6 +151,8 @@ def _download(url, dest, timeout=_DL_TIMEOUT, progress=None):
 
     progress(done_bytes, total_bytes_or_None) is called before the first
     chunk and after every chunk so the UI can show bytes downloaded.
+
+    Raises urllib errors and OSError on network / filesystem failures.
     """
     part = dest + ".part"
     start = os.path.getsize(part) if os.path.isfile(part) else 0
@@ -185,8 +200,16 @@ def _download(url, dest, timeout=_DL_TIMEOUT, progress=None):
     os.replace(part, dest)
 
 
-def _ensure_pair(pair, data_dir):
-    """Download + cache one translation pair. Returns dir or raises."""
+def _ensure_pair(pair: str, data_dir: str | None) -> str:
+    """Download + cache one translation pair from Hugging Face.
+
+    Skips files already on disk, repairs tokenizer.json's precompiled
+    normalizer (rejected by the Rust tokenizers loader), and verifies
+    every expected file landed. Returns the pair directory.
+
+    Raises RuntimeError when a pair file is missing after the download,
+    urllib errors on network failure.
+    """
     repo = f"Xenova/opus-mt-{pair}-en"
     d = _pair_dir(data_dir, pair)
     names = {
@@ -233,7 +256,9 @@ def _ensure_pair(pair, data_dir):
 
 
 class _PairMT:
-    def __init__(self, directory):
+    """One loaded opus-mt language pair: tokenizer + encoder/decoder."""
+
+    def __init__(self, directory: str) -> None:
         import numpy as _np  # noqa: F401  (kept local; cheap)
         import onnxruntime as ort
         from tokenizers import Tokenizer
@@ -255,8 +280,12 @@ class _PairMT:
             os.path.join(directory, "decoder.onnx"), sess_options=so,
             providers=["CPUExecutionProvider"])
 
-    def _split(self, text):
-        """Split into ~400-token chunks on sentence boundaries."""
+    def _split(self, text: str) -> list[str]:
+        """Split into ~400-token chunks on sentence boundaries.
+
+        Every chunk stays under the encoder's 512-token window. Pure
+        function of the tokenizer — no model state involved.
+        """
         sents = re.split(r"(?<=[.!?\n])\s+", text)
         chunks, cur, cur_n = [], [], 0
         for s in sents:
@@ -270,7 +299,8 @@ class _PairMT:
             chunks.append(" ".join(cur))
         return [c for c in chunks if c.strip()] or [text]
 
-    def translate(self, text):
+    def translate(self, text: str) -> str:
+        """Translate text chunk-by-chunk with greedy decoder generation."""
         np = self._np
         out_chunks = []
         for ch in self._split(text):
@@ -298,7 +328,8 @@ class _PairMT:
         return " ".join(out_chunks).strip()
 
 
-def _get_pair_mt(pair, data_dir):
+def _get_pair_mt(pair: str, data_dir: str | None) -> _PairMT:
+    """Thread-safe cached loader: one _PairMT per language pair."""
     with _lock:
         mt = _sessions.get(pair)
         if mt is None:
@@ -309,13 +340,21 @@ def _get_pair_mt(pair, data_dir):
 
 
 # --- public API ------------------------------------------------------------
-def translate_to_english(text, data_dir=None):
+def translate_to_english(text: str | None,
+                         data_dir: str | None = None) -> dict[str, object]:
     """Translate any-language text to English, fully on-device.
 
-    Returns {"ok": True, "text": ..., "src": "es"} or
-            {"ok": True, "text": ..., "src": "en", "message": "already_english"} or
-            {"ok": False, "message": "no_pair"|"error"|"empty"}.
-    The language pair downloads once on first use (~110 MB per pair).
+    Detects the language, downloads the matching Xenova opus-mt pair on
+    first use (~110 MB, cached under <data_dir>/mt_models/), and returns
+    one of:
+      {"ok": True, "text": ..., "src": "es"}                    — translated
+      {"ok": True, "text": ..., "src": "en",
+       "message": "already_english"}                             — no work needed
+      {"ok": False, "message": "empty"|"no_pair"|"error"}        — failure
+
+    Languages without a dedicated model fall back to the mul-en pair;
+    when the pair can't be loaded at all (e.g. no network) this returns
+    "no_pair" instead of raising, so the UI can show a friendly message.
     """
     text = (text or "").strip()
     if not text:
