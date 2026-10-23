@@ -2535,6 +2535,7 @@ def _preload_ai(directory):
 
 def main():
     ap = argparse.ArgumentParser(description="DropIt - beam files phone <-> PC over WiFi")
+    ap.add_argument("--version", action="version", version=f"DropIt {VERSION}")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--dir", default=os.path.join(os.path.expanduser("~"), "DropIt"))
     args = ap.parse_args()
