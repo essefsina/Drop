@@ -299,32 +299,34 @@ class _PairMT:
             chunks.append(" ".join(cur))
         return [c for c in chunks if c.strip()] or [text]
 
+    def _translate_chunk(self, ch: str) -> str:
+        """Run encoder/decoder inference on one chunk; no splitting."""
+        np = self._np
+        e = self.tok.encode(ch)
+        ids = e.ids[:512] or [self.pad_id]
+        ids_np = np.array([ids], dtype=np.int64)
+        mask_np = np.array([[1] * len(ids)], dtype=np.int64)
+        hs = self.enc.run(
+            ["last_hidden_state"],
+            {"input_ids": ids_np, "attention_mask": mask_np})[0]
+        out_ids = [self.dec_start]
+        max_new = min(512, len(ids) * 2 + 20)
+        for _ in range(max_new):
+            d_np = np.array([out_ids], dtype=np.int64)
+            logits = self.dec.run(
+                ["logits"],
+                {"input_ids": d_np,
+                 "encoder_attention_mask": mask_np,
+                 "encoder_hidden_states": hs.astype(np.float32)})[0]
+            nxt = int(np.argmax(logits[0, -1]))
+            if nxt == self.eos_id:
+                break
+            out_ids.append(nxt)
+        return self.tok.decode(out_ids[1:], skip_special_tokens=True)
+
     def translate(self, text: str) -> str:
         """Translate text chunk-by-chunk with greedy decoder generation."""
-        np = self._np
-        out_chunks = []
-        for ch in self._split(text):
-            e = self.tok.encode(ch)
-            ids = e.ids[:512] or [self.pad_id]
-            ids_np = np.array([ids], dtype=np.int64)
-            mask_np = np.array([[1] * len(ids)], dtype=np.int64)
-            hs = self.enc.run(
-                ["last_hidden_state"],
-                {"input_ids": ids_np, "attention_mask": mask_np})[0]
-            out_ids = [self.dec_start]
-            max_new = min(512, len(ids) * 2 + 20)
-            for _ in range(max_new):
-                d_np = np.array([out_ids], dtype=np.int64)
-                logits = self.dec.run(
-                    ["logits"],
-                    {"input_ids": d_np,
-                     "encoder_attention_mask": mask_np,
-                     "encoder_hidden_states": hs.astype(np.float32)})[0]
-                nxt = int(np.argmax(logits[0, -1]))
-                if nxt == self.eos_id:
-                    break
-                out_ids.append(nxt)
-            out_chunks.append(self.tok.decode(out_ids[1:], skip_special_tokens=True))
+        out_chunks = [self._translate_chunk(ch) for ch in self._split(text)]
         return " ".join(out_chunks).strip()
 
 
@@ -376,3 +378,54 @@ def translate_to_english(text: str | None,
         return {"ok": True, "text": text, "src": src or "auto",
                 "message": "already_english"}
     return {"ok": True, "text": out, "src": src or pair}
+
+
+def iter_chunk_translations(text: str | None, data_dir: str | None = None):
+    """Yield per-chunk translation results for streaming UIs.
+
+    Same pre-flight as translate_to_english (language detection, pair
+    download, already-English short-circuit), but yields one dict per
+    translated chunk as it finishes instead of one blocking call:
+
+      {"ok": True, "index": 0, "total": 3, "src": "es", "text": "..."}
+      ...
+      {"ok": True, "done": True, "src": "es", "text": "<full text>"}
+
+    A failure yields a single {"ok": False, "message": ...} dict —
+    mid-stream inference failures arrive as one after the chunks that
+    already succeeded, so callers should check every yielded dict.
+    """
+    text = (text or "").strip()
+    if not text:
+        yield {"ok": False, "message": "empty"}
+        return
+    src = detect_lang(text)
+    if src == "en":
+        yield {"ok": True, "done": True, "src": "en",
+               "message": "already_english", "text": text}
+        return
+    pair = _PAIR_FALLBACK.get(src, src or "mul")
+    try:
+        mt = _get_pair_mt(pair, data_dir)
+    except Exception:
+        yield {"ok": False, "message": "no_pair"}
+        return
+    chunks = mt._split(text)
+    total = len(chunks)
+    out_all: list[str] = []
+    for i, ch in enumerate(chunks):
+        try:
+            t = mt._translate_chunk(ch)
+        except Exception:
+            yield {"ok": False, "message": "error",
+                   "index": i, "total": total}
+            return
+        out_all.append(t)
+        yield {"ok": True, "index": i, "total": total,
+               "src": src or pair, "text": t}
+    full = " ".join(out_all).strip()
+    if not full or full.lower() == text.lower():
+        yield {"ok": True, "done": True, "src": src or "auto",
+               "message": "already_english", "text": text}
+    else:
+        yield {"ok": True, "done": True, "src": src or pair, "text": full}

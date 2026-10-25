@@ -1453,6 +1453,62 @@ async function openAiPopup(name, btn){
   }).catch(()=>{});
 }
 
+// Long-file translation: POST /api/aitranslate/stream returns NDJSON, one
+// JSON object per translated chunk, flushed as each chunk finishes. Each
+// chunk is painted into the modal on arrival instead of one blocking call.
+// Resolves to a /api/aitranslate-shaped {ok, text, src, message}; throws on
+// failure. Throws a `closed`-flagged error when the user closes the modal
+// mid-stream so the caller can stay silent.
+async function aiTranslateStream(text){
+  const fail = m => { const e = new Error(m === "no_pair" ? "Couldn't get the translation pack - check your internet and try again." : "Translation failed."); e.isAiErr = true; throw e; };
+  const resp = await fetch("/api/aitranslate/stream", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({text})});
+  const ctype = resp.headers.get("content-type") || "";
+  if(!resp.ok || ctype.indexOf("ndjson") < 0){
+    let r = null; try{ r = await resp.json(); }catch(e){}
+    fail(r && r.message);
+  }
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "", chunks = [], src = "", total = 0, final = null;
+  const paint = () => {
+    const ab = document.querySelector("#_aimodal .abody");
+    if(!ab) return false;
+    const n = Math.min(chunks.filter(Boolean).length + 1, total || 1);
+    ab.innerHTML = '<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">' +
+      esc("Translating chunk " + n + " of " + (total || "?") + "…") + "</div>" +
+      '<div style="white-space:pre-wrap;word-break:break-word">' +
+      esc(chunks.filter(Boolean).join(" ")) + "</div>";
+    return true;
+  };
+  try{
+    for(;;){
+      let rd;
+      try{ rd = await reader.read(); }catch(e){ fail(); }
+      if(rd.done) break;
+      buf += dec.decode(rd.value, {stream: true});
+      let nl;
+      while((nl = buf.indexOf("\\n")) >= 0){
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if(!line) continue;
+        let m = null; try{ m = JSON.parse(line); }catch(e){}
+        if(!m) continue;
+        if(m.ok === false) fail(m.message);
+        if(m.done){ final = m; break; }
+        chunks[m.index] = m.text; src = m.src || src; total = m.total || total;
+        if(!paint()){
+          try{ reader.cancel(); }catch(e){}
+          const c = new Error("closed"); c.closed = true; throw c;
+        }
+      }
+      if(final) break;
+    }
+  }catch(e){ if(e && (e.isAiErr || e.closed)) throw e; fail(); }
+  if(!final) fail();
+  return final;
+}
+
 async function aiRun(name, act){
   const titles = {transcribe: "📝 Transcription", translate: "🌐 Translation"};
   showAiModal(titles[act] || "AI", name, AI_LOADING, true);
@@ -1486,10 +1542,16 @@ async function aiRun(name, act){
       }, 500);
       let r;
       try{
-        const resp = await fetch("/api/aitranslate", {method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({text: t.text})});
-        r = await resp.json();
+        if(t.text.length > 2000){
+          // long file: stream translated chunks into the modal as they
+          // arrive instead of one blocking call
+          r = await aiTranslateStream(t.text);
+        }else{
+          const resp = await fetch("/api/aitranslate", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({text: t.text})});
+          r = await resp.json();
+        }
       }finally{ clearInterval(_dlpoll); }
       if(!r.ok) throw new Error(r.message === "no_pair" ? "Couldn't get the translation pack - check your internet and try again." : "Translation failed.");
       if(r.message === "already_english") throw new Error("That's already English.");
@@ -1499,7 +1561,7 @@ async function aiRun(name, act){
       text = (r.src && r.src !== "en" ? "[" + _srcLabel + " → en] " : "") + r.text;
     }
     showAiModal(titles[act], name, text);
-  }catch(e){ showAiModal(titles[act] || "AI", name, "⚠️ " + (e.message || e)); }
+  }catch(e){ if(e && e.closed) return; showAiModal(titles[act] || "AI", name, "⚠️ " + (e.message || e)); }
 }
 
 const AI_LOADING = `<span class="ailoading"><i></i><i></i><i></i></span>`;
@@ -2542,6 +2604,54 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "message": "error"}, 400)
             except Exception:  # noqa: BLE001 - AI optional
                 self._json({"ok": False, "message": "error"}, 500)
+        elif path == "/api/aitranslate/stream":
+            # NDJSON variant of /api/aitranslate: one JSON object per line,
+            # flushed as each chunk finishes, so long files render
+            # progressively instead of freezing the modal. Same validation
+            # and rate limiting as the single-shot endpoint.
+            if not _ait_allowed(self.client_address[0]):
+                self._json({"ok": False, "message": "rate_limited"}, 429)
+                return
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}")
+                text = data.get("text", "")
+                if not isinstance(text, str) or not text.strip():
+                    self._json({"ok": False, "message": "empty"}, 400)
+                    return
+                if len(text) > 20_000:
+                    self._json({"ok": False, "message": "too_long"}, 400)
+                    return
+            except (json.JSONDecodeError, OSError):
+                self._json({"ok": False, "message": "error"}, 400)
+                return
+            import dropit_mt
+            try:
+                stream = dropit_mt.iter_chunk_translations(
+                    text.strip(), _data_dir())
+                first = next(stream, None)
+                if first is None or not first.get("ok", True):
+                    code = 400 if (first or {}).get("message") in (
+                        "empty", "too_long") else 500
+                    self._json(first or {"ok": False, "message": "error"},
+                               code)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type",
+                                 "application/x-ndjson; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                for msg in (first, *stream):
+                    self.wfile.write((json.dumps(msg) + "\n").encode("utf-8"))
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # user closed the modal mid-stream
+            except Exception:  # noqa: BLE001 - AI optional
+                try:
+                    self.wfile.write((json.dumps(
+                        {"ok": False, "message": "error"}) + "\n").encode())
+                    self.wfile.flush()
+                except OSError:
+                    pass
         else:
             self._send(404, b"not found", "text/plain")
 
