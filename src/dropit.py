@@ -446,8 +446,8 @@ PAGE = """<!DOCTYPE html>
            font-family:inherit; color:var(--txt); background:#10182b; border:1px solid var(--line); cursor:pointer; }
   .mbtn-primary:active, .mbtn-secondary:active { filter:brightness(1.2); }
   #muploads { margin-top:10px; }
-  .nact { display:flex; gap:8px; margin-top:11px; }
-  .nact button { flex:1 1 0; display:flex; align-items:center; justify-content:center;
+  .nact { display:flex; gap:8px; margin-top:11px; flex-wrap:wrap; }
+  .nact button { flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:center;
           padding:7px 4px; background:linear-gradient(135deg,var(--c1,#22d3ee),var(--c2,#0ea5e9));
           border:none; border-radius:10px; cursor:pointer; color:#0a0f1e; }
   .nact button svg { width:15px; height:15px; display:block; }
