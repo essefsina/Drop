@@ -1,0 +1,7 @@
+[
+  "tests/test_script_lang.py::test_below_threshold_mixed_text_returns_none",
+  "tests/test_script_lang.py::test_each_script_maps_to_its_language",
+  "tests/test_script_lang.py::test_empty_text_returns_none",
+  "tests/test_script_lang.py::test_kana_wins_over_kanji_in_japanese",
+  "tests/test_script_lang.py::test_latin_text_returns_none"
+]
