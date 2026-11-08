@@ -4,7 +4,7 @@
 
 #include "version.iss"
 
-#define MyAppName "DropIt"
+#define MyAppName "Drop"
 #define MyAppPublisher "Essef"
 
 [Setup]
@@ -13,7 +13,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\DropIt
-DefaultGroupName=DropIt
+DefaultGroupName=Drop
 DisableProgramGroupPage=yes
 OutputDir=dist-installer
 ; Stable file name on purpose: every release uploads its installer under this
@@ -27,7 +27,7 @@ PrivilegesRequired=lowest
 AlwaysUsePersonalGroup=yes
 CloseApplications=yes
 RestartApplications=no
-UninstallDisplayName=DropIt
+UninstallDisplayName=Drop
 VersionInfoVersion={#MyAppVersion}
 WizardStyle=modern
 
@@ -49,12 +49,12 @@ Type: files; Name: "{userstartup}\DropIt.lnk"
 Type: filesandordirs; Name: "{localappdata}\DropIt"
 
 [Icons]
-Name: "{group}\DropIt"; Filename: "{app}\DropIt.exe"
-Name: "{group}\Uninstall DropIt"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\DropIt"; Filename: "{app}\DropIt.exe"; Tasks: desktopicon
+Name: "{group}\Drop"; Filename: "{app}\DropIt.exe"
+Name: "{group}\Uninstall Drop"; Filename: "{uninstallexe}"
+Name: "{userdesktop}\Drop"; Filename: "{app}\DropIt.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\DropIt.exe"; Description: "Launch DropIt now"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\DropIt.exe"; Description: "Launch Drop now"; Flags: nowait postinstall skipifsilent
 
 [Code]
 // Kill any running DropIt before installing so DropIt.exe isn't file-locked.

@@ -26,7 +26,7 @@ from tkinter import messagebox, ttk
 # (DropIt-Setup.exe) and this URL always serves the newest release:
 #     https://github.com/<your-username>/DropIt/releases/latest/download/DropIt-Setup.exe
 # ---------------------------------------------------------------------------
-DOWNLOAD_URL = "https://github.com/essefsina/DropIt/releases/latest/download/DropIt-Setup.exe"
+DOWNLOAD_URL = "https://github.com/essefsina/Drop/releases/latest/download/DropIt-Setup.exe"
 
 SETUP_FILENAME = "DropIt-Setup.exe"
 CHUNK_SIZE = 256 * 1024
@@ -40,7 +40,7 @@ def resource_path(name: str) -> str:
 class StubApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("DropIt Setup")
+        self.root.title("Drop Setup")
         self.root.resizable(False, False)
         try:
             self.root.iconbitmap(resource_path("icon.ico"))
@@ -76,7 +76,7 @@ class StubApp:
 
     def fail(self, message: str) -> None:
         def show() -> None:
-            messagebox.showerror("DropIt Setup", message)
+            messagebox.showerror("Drop Setup", message)
             self.root.destroy()
 
         self.root.after(0, show)
@@ -91,7 +91,7 @@ class StubApp:
 
         dest = os.path.join(tempfile.gettempdir(), SETUP_FILENAME)
         try:
-            self.set_status("Downloading DropIt…")
+            self.set_status("Downloading Drop…")
             req = urllib.request.Request(
                 DOWNLOAD_URL, headers={"User-Agent": "DropIt-Stub-Installer"}
             )
@@ -108,7 +108,7 @@ class StubApp:
                     if total:
                         self.set_progress(downloaded, total)
                         pct = downloaded * 100 // total
-                        self.set_status(f"Downloading DropIt… {pct}%")
+                        self.set_status(f"Downloading Drop… {pct}%")
             if os.path.getsize(dest) == 0:
                 raise OSError("downloaded file is empty")
         except Exception as exc:  # noqa: BLE001 - show any failure to the user
@@ -117,7 +117,7 @@ class StubApp:
             except OSError:
                 pass
             self.fail(
-                f"Couldn't download DropIt:\n{exc}\n\n"
+                f"Couldn't download Drop:\n{exc}\n\n"
                 "Check your internet connection and try again."
             )
             return

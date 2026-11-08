@@ -14,11 +14,10 @@ import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parent
-SRC = ROOT.parent / "src"
 
 
 def get_version() -> str:
-    text = (SRC / "dropit.py").read_text(encoding="utf-8")
+    text = (ROOT / "dropit.py").read_text(encoding="utf-8")
     match = re.search(r'^VERSION\s*=\s*"([^"]+)"', text, re.MULTILINE)
     if not match:
         raise SystemExit("VERSION not found in dropit.py")
