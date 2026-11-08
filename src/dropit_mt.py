@@ -15,6 +15,7 @@ from collections.abc import Callable
 import json
 import os
 import re
+import shutil
 import threading
 import urllib.request
 
@@ -44,33 +45,74 @@ _COMMON_SETS = {l: set(w.split()) for l, w in _COMMON.items()}
 def _script_lang(text: str) -> str | None:
     """Identify the language of non-Latin scripts via Unicode ranges.
 
-    Returns an ISO-639-1 code when a script is dominant in the text,
-    otherwise None (Latin scripts need the word-frequency fallback).
+    Judged by share of *letters* (not raw characters), so mixed content —
+    e.g. a product photo whose OCR mixes English brand words with Chinese
+    text — still detects correctly when the foreign script is a real
+    presence (>= 25% of letters). Returns None for Latin text.
     """
-    cjk = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
-    kana = sum(1 for c in text if "\u3040" <= c <= "\u30ff")
-    hangul = sum(1 for c in text if "\uac00" <= c <= "\ud7a3")
-    arabic = sum(1 for c in text if "\u0600" <= c <= "\u06ff")
-    cyrillic = sum(1 for c in text if "\u0400" <= c <= "\u04ff")
-    deva = sum(1 for c in text if "\u0900" <= c <= "\u097f")
-    beng = sum(1 for c in text if "\u0980" <= c <= "\u09ff")
-    n = max(len(text), 1)
-    if kana / n > 0.05:
-        return "ja"
-    if hangul / n > 0.05:
-        return "ko"
-    if cjk / n > 0.10:
-        return "zh"
-    if arabic / n > 0.10:
-        return "ar"
-    if deva / n > 0.10:
-        return "hi"
-    if beng / n > 0.10:
-        return "bn"
-    if cyrillic / n > 0.10:
-        return "ru"
-    return None
+    han = kana = hangul = arabic = hebrew = 0
+    cyrillic = greek = deva = beng = thai = armenian = georgian = 0
+    letters = 0
+    for c in text:
+        if not c.isalpha():
+            continue
+        letters += 1
+        o = ord(c)
+        if 0x3040 <= o <= 0x30FF:
+            kana += 1
+        elif 0x4E00 <= o <= 0x9FFF:
+            han += 1
+        elif 0xAC00 <= o <= 0xD7A3:
+            hangul += 1
+        elif 0x0600 <= o <= 0x06FF or 0x0750 <= o <= 0x077F:
+            arabic += 1
+        elif 0x0590 <= o <= 0x05FF:
+            hebrew += 1
+        elif 0x0400 <= o <= 0x04FF:
+            cyrillic += 1
+        elif 0x0370 <= o <= 0x03FF:
+            greek += 1
+        elif 0x0900 <= o <= 0x097F:
+            deva += 1
+        elif 0x0980 <= o <= 0x09FF:
+            beng += 1
+        elif 0x0E00 <= o <= 0x0E7F:
+            thai += 1
+        elif 0x0530 <= o <= 0x058F:
+            armenian += 1
+        elif 0x10A0 <= o <= 0x10FF:
+            georgian += 1
+    if letters < 4:
+        return None
 
+    def share(n):
+        return n / letters
+
+    if kana >= 2 and share(kana + han) >= 0.25:
+        return "ja"  # kana exists only in Japanese
+    if share(hangul) >= 0.25:
+        return "ko"
+    if share(han) >= 0.25:
+        return "zh"
+    if share(arabic) >= 0.25:
+        return "ar"
+    if share(hebrew) >= 0.25:
+        return "he"
+    if share(cyrillic) >= 0.25:
+        return "ru"
+    if share(greek) >= 0.25:
+        return "el"
+    if share(deva) >= 0.25:
+        return "hi"
+    if share(beng) >= 0.25:
+        return "bn"
+    if share(thai) >= 0.25:
+        return "th"
+    if share(armenian) >= 0.25:
+        return "hy"
+    if share(georgian) >= 0.25:
+        return "ka"
+    return None
 
 def detect_lang(text: str | None) -> str | None:
     """Return the ISO-639-1 language code for the text, or None if unsure.
@@ -116,9 +158,37 @@ _PAIR_FILES = (
     "generation_config.json",
 )
 
-_lock = threading.Lock()
+_lock = threading.RLock()  # RLock, not Lock: _get_pair_mt holds the
+# lock while _ensure_pair downloads, and the download progress callback
+# re-acquires it. A plain Lock deadlocks on every first-use pack
+# download (verified live, 2026-10-31). Sole v2.7.82 change kept in
+# the v2.7.83 revert; everything else from 2.7.82 was removed.
 _sessions = {}  # pair -> _PairMT
 _dl_progress = {}  # pair -> {"file": str, "done": int, "total": int|None}
+
+
+class InsufficientDiskSpace(OSError):
+    """Raised when the disk can't fit a translation-pack download."""
+
+
+def _mb(n: int) -> str:
+    """Bytes -> '123 MB', for logs and user-facing messages."""
+    return "%d MB" % (n / 1048576)
+
+
+def _check_space(dest: str, need_bytes: int) -> None:
+    """Raise InsufficientDiskSpace when dest's disk can't fit need_bytes.
+
+    Skips the check when free space can't be determined - the download
+    itself will surface any real filesystem error.
+    """
+    try:
+        free = shutil.disk_usage(os.path.dirname(os.path.abspath(dest))).free
+    except OSError:
+        return
+    if free < need_bytes:
+        raise InsufficientDiskSpace(
+            "need %s free, only %s available" % (_mb(need_bytes), _mb(free)))
 
 
 def download_progress() -> dict[str, dict[str, str | int | None]]:
@@ -152,7 +222,9 @@ def _download(url: str, dest: str, timeout: int = _DL_TIMEOUT,
     progress(done_bytes, total_bytes_or_None) is called before the first
     chunk and after every chunk so the UI can show bytes downloaded.
 
-    Raises urllib errors and OSError on network / filesystem failures.
+    Raises urllib errors and OSError on network / filesystem failures,
+    and InsufficientDiskSpace when the destination disk can't fit the
+    remaining bytes (checked before the first byte is written).
     """
     part = dest + ".part"
     start = os.path.getsize(part) if os.path.isfile(part) else 0
@@ -170,12 +242,11 @@ def _download(url: str, dest: str, timeout: int = _DL_TIMEOUT,
                 progress(start, start)
             return
         raise
-    with r, open(part, "ab" if start else "wb") as f:
+    with r:
         status = getattr(r, "status", 200)
         resumed = bool(start) and status == 206
         if start and not resumed:
             # Server ignored the Range request - start over.
-            f.truncate(0)
             start = 0
         try:
             if resumed:
@@ -187,16 +258,28 @@ def _download(url: str, dest: str, timeout: int = _DL_TIMEOUT,
         except (TypeError, ValueError, IndexError):
             total = None
         done = start
-        if progress:
-            progress(done, total)
-        while True:
-            chunk = r.read(1024 * 256)
-            if not chunk:
-                break
-            f.write(chunk)
-            done += len(chunk)
+        print("[dropit_mt] downloading %s (%s)%s" %
+              (os.path.basename(dest),
+               _mb(total) if total else "size unknown",
+               " - resuming at %s" % _mb(start) if start else ""))
+        if total:
+            # Fail fast with a clear message instead of dying mid-download.
+            _check_space(dest, total - done)
+        with open(part, "ab" if start else "wb") as f:
+            if not resumed:
+                # Fresh "wb" truncates on open anyway; this clears a stale
+                # partial file when the server ignored our Range request.
+                f.truncate(0)
             if progress:
                 progress(done, total)
+            while True:
+                chunk = r.read(1024 * 256)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(done, total)
     os.replace(part, dest)
 
 
@@ -352,7 +435,7 @@ def translate_to_english(text: str | None,
       {"ok": True, "text": ..., "src": "es"}                    — translated
       {"ok": True, "text": ..., "src": "en",
        "message": "already_english"}                             — no work needed
-      {"ok": False, "message": "empty"|"no_pair"|"error"}        — failure
+      {"ok": False, "message": "empty"|"no_pair"|"no_space"|"error"} — failure
 
     Languages without a dedicated model fall back to the mul-en pair;
     when the pair can't be loaded at all (e.g. no network) this returns
@@ -368,6 +451,8 @@ def translate_to_english(text: str | None,
     pair = _PAIR_FALLBACK.get(src, src or "mul")
     try:
         mt = _get_pair_mt(pair, data_dir)
+    except InsufficientDiskSpace:
+        return {"ok": False, "message": "no_space"}
     except Exception:
         return {"ok": False, "message": "no_pair"}
     try:
@@ -407,6 +492,9 @@ def iter_chunk_translations(text: str | None, data_dir: str | None = None):
     pair = _PAIR_FALLBACK.get(src, src or "mul")
     try:
         mt = _get_pair_mt(pair, data_dir)
+    except InsufficientDiskSpace:
+        yield {"ok": False, "message": "no_space"}
+        return
     except Exception:
         yield {"ok": False, "message": "no_pair"}
         return
@@ -429,3 +517,38 @@ def iter_chunk_translations(text: str | None, data_dir: str | None = None):
                "message": "already_english", "text": text}
     else:
         yield {"ok": True, "done": True, "src": src or pair, "text": full}
+
+
+def pack_info(data_dir: str | None) -> list[dict[str, object]]:
+    """List cached translation packs as [{"pair": str, "bytes": int}]."""
+    root = os.path.join(data_dir or ".", "mt_models")
+    out: list[dict[str, object]] = []
+    if os.path.isdir(root):
+        for pair in sorted(os.listdir(root)):
+            d = os.path.join(root, pair)
+            if not os.path.isdir(d):
+                continue
+            total = 0
+            for base, _ds, files in os.walk(d):
+                for fn in files:
+                    try:
+                        total += os.path.getsize(os.path.join(base, fn))
+                    except OSError:
+                        pass
+            out.append({"pair": pair, "bytes": total})
+    return out
+
+
+def clear_packs(data_dir: str | None) -> dict[str, object]:
+    """Delete all cached translation packs.
+
+    Returns {"pairs": [...], "bytes": freed}. Loaded sessions are dropped
+    too, so the next translation re-downloads its pair on demand.
+    """
+    packs = pack_info(data_dir)
+    freed = sum(p["bytes"] for p in packs)
+    shutil.rmtree(os.path.join(data_dir or ".", "mt_models"),
+                  ignore_errors=True)
+    with _lock:
+        _sessions.clear()
+    return {"pairs": [p["pair"] for p in packs], "bytes": freed}

@@ -21,6 +21,7 @@ python3 -m pip install -r requirements.txt
 echo "==> Building DropIt.app (takes a few minutes)..."
 python3 -m PyInstaller --noconfirm --windowed --name DropIt \
   --add-data "icon.png:." \
+  --add-data "logo.png:." \
   app.py
 
 echo ""

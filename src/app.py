@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""DropIt desktop app - native window + system tray around the DropIt server.
+"""Drop desktop app - native window + system tray around the Drop server.
 
 Run:
     python app.py
 Build a Windows .exe:
     pip install -r requirements.txt
-    pyinstaller --noconfirm --onefile --windowed --name DropIt --icon icon.ico --add-data "ai_model;ai_model" app.py
+    pyinstaller --noconfirm --onefile --windowed --name DropIt --icon icon.ico --add-data "icon.png;." --add-data "logo.png;." --add-data "ai_model;ai_model" app.py
 """
 
 import argparse
@@ -49,6 +49,21 @@ def save_config(cfg: dict) -> None:
 
 
 # ---------------------------------------------------------------- js api
+def _spawn(argv):
+    """Spawn a GUI helper (Explorer / Finder / xdg-open) from the
+    frozen --windowed app.
+    v2.8.20 (9): explicit DEVNULL stdio + close_fds. A windowed
+    PyInstaller build has no console and no valid std handles;
+    letting the child inherit them makes Popen raise
+    [WinError 6] "The handle is invalid" on the PC -- which is
+    why "Show in folder" was dead while open_folder/open_file
+    (os.startfile on Windows) worked. The 2.8.18 probe could
+    never see this: it faked Popen, on Linux. DEVNULL stdio
+    removes the parent's handles from the child entirely."""
+    return subprocess.Popen(argv, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            close_fds=True)
 def _browse_for_folder_win(title="Choose a folder", initial=None):
     """Native Windows folder picker (SHBrowseForFolderW).
 
@@ -144,15 +159,223 @@ class Api:
 
     def __init__(self, server):
         self.server = server
+        # v2.8.31 custom title bar: set by main() once the window
+        # is created (True only when frameless creation worked).
+        self.frameless = False
+        self._maximized = False
 
-    def open_folder(self) -> bool:
+    def _window(self):
+        """The pywebview window, or None (no window / webview missing)."""
+        try:
+            import webview
+
+            wins = getattr(webview, "windows", [])
+            return wins[0] if wins else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def is_frameless(self) -> dict:
+        """v2.8.31: True when the window was created frameless, so the
+        page knows whether to show its own title bar. A framed
+        fallback window keeps the native bar and the page hides
+        the custom one."""
+        return {"ok": True, "frameless": bool(getattr(self, "frameless", False))}
+
+    def is_maximized(self) -> dict:
+        """v2.8.31: maximise state for the title-bar icon (maximise
+        square vs restore overlapping-squares). Falls back to the
+        toggle-tracked flag when the platform window exposes none."""
+        win = self._window()
+        state = None
+        if win is not None:
+            state = getattr(win, "is_maximized", None)
+        if state is None:
+            state = bool(getattr(self, "_maximized", False))
+        return {"ok": True, "maximized": bool(state)}
+
+    def minimize_window(self) -> dict:
+        """v2.8.31: title-bar minimise. The existing minimized event
+        still fires, so minimise-to-tray behaviour is unchanged."""
+        win = self._window()
+        if win is None:
+            return {"ok": False, "error": "no window"}
+        try:
+            win.minimize()
+            return {"ok": True}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+
+    def toggle_maximize_window(self) -> dict:
+        """v2.8.31: title-bar maximise / restore toggle."""
+        win = self._window()
+        if win is None:
+            return {"ok": False, "error": "no window"}
+        try:
+            if self.is_maximized()["maximized"]:
+                win.restore()
+                self._maximized = False
+            else:
+                win.maximize()
+                self._maximized = True
+            return {"ok": True, "maximized": bool(self._maximized)}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+
+    def close_window(self) -> dict:
+        """v2.8.31: title-bar close -- destroys the window, which
+        ends webview.start() and exits the app, as X does today."""
+        win = self._window()
+        if win is None:
+            return {"ok": False, "error": "no window"}
+        try:
+            win.destroy()
+            return {"ok": True}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+
+    def move_window(self, x, y) -> dict:
+        """v2.8.31: move the window's top-left corner to (x, y)
+        screen pixels -- the title-bar drag path. A window whose
+        platform backend has no move verb reports it and the
+        window simply stays put; it is never left unusable."""
+        win = self._window()
+        if win is None:
+            return {"ok": False, "error": "no window"}
+        try:
+            move = getattr(win, "move", None)
+            if move is None:
+                return {"ok": False, "error": "move not supported"}
+            move(int(x), int(y))
+            return {"ok": True}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+
+    def _link_dir(self) -> str:
+        """The CURRENT link's folder (v2.7.84), not the base root.
+        v2.7.83 opened server.directory here, so Open folder opened
+        the shared root even when files lived in base/<link>/, and
+        Open file looked for link files in the root and failed.
+        v2.7.96 FIX: this used to call dropit._link_folder, which
+        does not exist -- the AttributeError fell through to the
+        root fallback, so every bridge Open folder opened the
+        ROOT, not the address folder. It now calls the real
+        dropit._address_folder. The MENU's root route does not
+        use this at all; it uses open_root_folder() below."""
+        try:
+            cfg = dropit._load_config()
+            d = dropit._address_folder(cfg)
+            if d:
+                return d
+        except Exception:  # noqa: BLE001
+            pass
+        return self.server.directory
+
+    def host_token(self) -> str:
+        """Desktop host proof (v2.7.88). Returns the server's
+        in-memory host token to the pywebview window's own page
+        ONLY, via this local JS bridge. No LAN browser has this
+        bridge, so no guest can call this. The page keeps the token
+        in JS memory only (never localStorage, never a URL) and
+        sends it as X-Drop-Host, which lets the desktop window be
+        recognised as host even if its page was loaded via a LAN IP
+        or .local name instead of loopback."""
+        try:
+            return str(getattr(self.server, "host_token", "") or "")
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def open_root_folder(self) -> bool:
+        """Open the ROOT folder (v2.7.96 MENU route), not the
+        current address's subfolder. The menu's Open folder
+        targets this; the Files tab / Set Up dialog use
+        open_folder() (address folder) instead."""
+        folder = self.server.directory
         try:
             if sys.platform == "win32":
-                os.startfile(self.server.directory)  # noqa: S606
+                os.startfile(folder)  # noqa: S606
             elif sys.platform == "darwin":
-                subprocess.Popen(["open", self.server.directory])
+                _spawn(["open", folder])
             else:
-                subprocess.Popen(["xdg-open", self.server.directory])
+                _spawn(["xdg-open", folder])
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def set_root_directory(self, path: str) -> dict:
+        """Change the ROOT folder only (v2.7.96 MENU route):
+        cfg["directory"] + server.directory, with per-address
+        folder overrides left untouched. Unlike set_directory(),
+        a link being active does NOT redirect this into that
+        link's override."""
+        try:
+            raw = str(path).strip().strip('"')
+            if not raw:
+                return {"ok": False, "error": "empty path"}
+            new = os.path.abspath(os.path.expanduser(raw))
+            if sys.platform == "win32":
+                drive = os.path.splitdrive(new)[0]
+                if drive and not os.path.isdir(drive + os.sep):
+                    return {"ok": False, "error": f"drive {drive} not found"}
+            os.makedirs(new, exist_ok=True)
+            cfg = load_config()
+            cfg["directory"] = new
+            self.server.directory = new
+            save_config(cfg)
+            return {"ok": True, "directory": new, "dirname": os.path.basename(new)}
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "error": "unexpected error"}
+
+    def browse_root_directory(self) -> dict:
+        """Pick the ROOT folder with a native folder dialog
+        (v2.7.96 MENU route), then set_root_directory()."""
+        if sys.platform == "win32":
+            try:
+                path = _browse_for_folder_win(
+                    title="Choose the Drop root folder",
+                    initial=self.server.directory,
+                )
+            except Exception as e:  # noqa: BLE001
+                import traceback
+
+                traceback.print_exc()
+                return {"ok": False,
+                        "error": "Folder picker failed (%s: %s)"
+                                 % (type(e).__name__, e)}
+            if not path:
+                return {"ok": False, "error": "cancelled"}
+            try:
+                return self.set_root_directory(path)
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)}
+        try:
+            import webview
+
+            wins = getattr(webview, "windows", [])
+            if not wins:
+                return {"ok": False, "error": "no window"}
+            result = wins[0].create_file_dialog(
+                webview.OPEN_DIALOG,
+                directory=True,
+                allow_multiple=False,
+            )
+            if not result:
+                return {"ok": False, "error": "cancelled"}
+            path = result[0] if isinstance(result, (list, tuple)) else result
+            return self.set_root_directory(path)
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)}
+
+    def open_folder(self) -> bool:
+        folder = self._link_dir()
+        try:
+            if sys.platform == "win32":
+                os.startfile(folder)  # noqa: S606
+            elif sys.platform == "darwin":
+                _spawn(["open", folder])
+            else:
+                _spawn(["xdg-open", folder])
             return True
         except Exception:  # noqa: BLE001
             return False
@@ -160,20 +383,111 @@ class Api:
     def open_file(self, name: str) -> bool:
         """Open a file in the save folder with its default app."""
         try:
+            base = self._link_dir()
             clean = dropit.safe_name(name)
-            path = os.path.abspath(os.path.join(self.server.directory, clean))
-            if not path.startswith(os.path.abspath(self.server.directory) + os.sep):
+            path = os.path.abspath(os.path.join(base, clean))
+            if not path.startswith(os.path.abspath(base) + os.sep):
                 return False
             if not os.path.isfile(path):
                 return False
             if sys.platform == "win32":
                 os.startfile(path)  # noqa: S606
             elif sys.platform == "darwin":
-                subprocess.Popen(["open", path])
+                _spawn(["open", path])
             else:
-                subprocess.Popen(["xdg-open", path])
+                _spawn(["xdg-open", path])
             return True
         except Exception:  # noqa: BLE001
+            return False
+
+    def get_last_reveal(self) -> dict:
+        """v2.8.20 (9): the last reveal_file attempt, read back by
+        the page (revealFile asks this when the bridge says no,
+        and names the recorded error in its toast). The frozen
+        windowed build has nowhere to print stderr, so without
+        this a failed reveal is invisible on the PC."""
+        try:
+            rec = getattr(self, "last_reveal", None)
+            return dict(rec) if isinstance(rec, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def reveal_file(self, name: str) -> bool:
+        """v2.8.9: open the save folder with this file selected /
+        highlighted (the per-file Open button's new job), instead
+        of opening the file itself. Windows: Explorer /select;
+        macOS: Finder -R. Linux has no select verb, so it opens
+        the folder itself. Same path jailing as open_file.
+        v2.8.17: the Explorer call MUST be the two-item list
+        ["explorer", "/select," + path]. The 2.8.14 verbatim
+        string was EXACTLY the bug: CPython's Windows
+        _execute_child runs list2cmdline([args]) when args is
+        a str, so the whole `explorer /select,"C:\\..."`
+        command gets outer-quoted as ONE token and
+        CreateProcess cannot find the program (the 2.8.14
+        in-process test only captured the string passed to
+        Popen, never the real command line). With the list
+        form, list2cmdline produces `explorer
+        /select,C:\\...` -- the switch and path stay one
+        argument, quoted only when the path has spaces,
+        which Explorer parses. Do NOT use the three-item
+        form ["explorer", "/select,", path] (the 2.8.11 bug:
+        a space after the comma = an empty path to select).
+        The same fix is in the server /api/reveal handler.
+        v2.8.18: every attempt is recorded on self.last_reveal
+        (name / resolved path / argv / ok / error) and failures
+        are logged to stderr, so a "nothing happens" click on
+        the PC leaves proof of whether the bridge was reached,
+        whether the file was found, and what Explorer was
+        asked to run -- instead of dying silently.
+        v2.8.20 (9): the ROOT CAUSE, found by comparing the
+        spawn sites -- reveal_file is the ONLY Windows path in
+        the app that uses subprocess.Popen; open_folder,
+        open_file and open_root_folder all use os.startfile on
+        Windows (and they work). In the frozen --windowed
+        build the process has no console and no valid std
+        handles, so Popen's inherited stdio fails the spawn
+        with [WinError 6] "The handle is invalid" -- caught
+        here, recorded, and returned as False, which is why
+        the click died with nothing visibly happening (the
+        2.8.18 probe faked Popen on Linux, so it could never
+        see this). The spawn now goes through _spawn()
+        (DEVNULL stdio + close_fds), and get_last_reveal()
+        lets the page read the record back."""
+        self.last_reveal = {"name": name, "ok": False, "error": "",
+                            "path": "", "argv": None}
+        try:
+            base = self._link_dir()
+            clean = dropit.safe_name(name)
+            path = os.path.abspath(os.path.join(base, clean))
+            self.last_reveal["path"] = path
+            if not path.startswith(os.path.abspath(base) + os.sep):
+                self.last_reveal["error"] = "path outside save folder"
+                return False
+            if not os.path.isfile(path):
+                self.last_reveal["error"] = "file not found: " + path
+                print("[Drop] reveal_file: file not found: %s"
+                      % path, file=sys.stderr, flush=True)
+                return False
+            if sys.platform == "win32":
+                argv = ["explorer", "/select," + path]
+                self.last_reveal["argv"] = argv
+                _spawn(argv)
+            elif sys.platform == "darwin":
+                argv = ["open", "-R", path]
+                self.last_reveal["argv"] = argv
+                _spawn(argv)
+            else:
+                argv = ["xdg-open", base]
+                self.last_reveal["argv"] = argv
+                _spawn(argv)
+            self.last_reveal["ok"] = True
+            return True
+        except Exception as e:  # noqa: BLE001
+            self.last_reveal["error"] = "%s: %s" % (type(e).__name__, e)
+            print("[Drop] reveal_file failed for %r: %s: %s"
+                  % (name, type(e).__name__, e), file=sys.stderr,
+                  flush=True)
             return False
 
     def open_path(self, path: str) -> bool:
@@ -185,15 +499,19 @@ class Api:
             if sys.platform == "win32":
                 os.startfile(p)  # noqa: S606
             elif sys.platform == "darwin":
-                subprocess.Popen(["open", p])
+                _spawn(["open", p])
             else:
-                subprocess.Popen(["xdg-open", p])
+                _spawn(["xdg-open", p])
             return True
         except Exception:  # noqa: BLE001
             return False
 
     def set_directory(self, path: str) -> dict:
-        """Change the save folder from the web UI. Returns JSON-serializable."""
+        """Change the save folder from the web UI. Returns JSON-serializable.
+        v2.7.84: with a link active this changes THAT link's folder
+        (its registry override) and leaves the base root untouched, so
+        switching links later still finds each link's own folder. With
+        no link it moves the base root, as before."""
         try:
             raw = str(path).strip().strip('"')
             if not raw:
@@ -204,9 +522,14 @@ class Api:
                 if drive and not os.path.isdir(drive + os.sep):
                     return {"ok": False, "error": f"drive {drive} not found"}
             os.makedirs(new, exist_ok=True)
-            self.server.directory = new
             cfg = load_config()
-            cfg["directory"] = new
+            link = dropit._current_address(cfg)
+            if link:
+                entry = dropit._address_entry(cfg, link)
+                entry["folder"] = new
+            else:
+                cfg["directory"] = new
+                self.server.directory = new
             save_config(cfg)
             return {"ok": True, "directory": new, "dirname": os.path.basename(new)}
         except OSError as e:
@@ -221,8 +544,8 @@ class Api:
             # even with directory=True, so it is not used here on Windows.
             try:
                 path = _browse_for_folder_win(
-                    title="Choose the DropIt save folder",
-                    initial=self.server.directory,
+                    title="Choose the Drop save folder",
+                    initial=self._link_dir(),
                 )
             except Exception as e:  # noqa: BLE001
                 import traceback
@@ -402,7 +725,15 @@ def start_tray(server, window=None):
             pass
 
     def on_copy(icon, item):
-        copy_text(server.url)
+        # v2.8.29 (3): the tray copies the FULL WORKING URL -- the
+        # SAME http://<LAN IP>:<port>/ the QR code encodes -- so
+        # pasting it into a browser opens the web version. The
+        # bare link name / .local form cannot be resolved by most
+        # phone browsers (see dropit.fullAddressUrl).
+        try:
+            copy_text(dropit._qr_connect_url(server))
+        except Exception:  # noqa: BLE001
+            pass
 
     def on_autostart(icon, item):
         set_autostart(not is_autostart())
@@ -412,7 +743,7 @@ def start_tray(server, window=None):
         os._exit(0)
 
     menu = pystray.Menu(
-        pystray.MenuItem("Open DropIt", on_open, default=True),
+        pystray.MenuItem("Open Drop", on_open, default=True),
         pystray.MenuItem("Copy phone link", on_copy),
         pystray.MenuItem(
             "Start with Windows",
@@ -420,10 +751,10 @@ def start_tray(server, window=None):
             checked=lambda item: is_autostart(),
             enabled=sys.platform == "win32" and getattr(sys, "frozen", False),
         ),
-        pystray.MenuItem("Quit DropIt", on_quit),
+        pystray.MenuItem("Quit Drop", on_quit),
     )
     try:
-        icon = pystray.Icon("DropIt", _tray_image(), f"DropIt - {server.url}", menu)
+        icon = pystray.Icon("DropIt", _tray_image(), f"Drop - {server.url}", menu)
         icon.run_detached()
         return icon
     except Exception:  # noqa: BLE001
@@ -432,8 +763,8 @@ def start_tray(server, window=None):
 
 # ------------------------------------------------------------------- main
 def main():
-    ap = argparse.ArgumentParser(description="DropIt desktop app")
-    ap.add_argument("--version", action="version", version=f"DropIt {VERSION}")
+    ap = argparse.ArgumentParser(description="Drop desktop app")
+    ap.add_argument("--version", action="version", version=f"Drop {VERSION}")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--dir", default=None,
                     help="Save folder (overrides the remembered one)")
@@ -450,7 +781,14 @@ def main():
 
     server = dropit.make_server(args.port, directory, desktop=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"DropIt {VERSION} - {server.url} -> {server.directory}")
+    print(f"Drop {VERSION} - {server.url} -> {server.directory}")
+    # v2.8.41 (1): warm the AI index in the background at startup,
+    # like dropit.py main() does -- the desktop app never did, so
+    # the first search after a restart WAS the full index build
+    # (past the 75s timeout on real photo folders). Never breaks
+    # startup: _preload_ai catches its own errors.
+    threading.Thread(target=dropit._preload_ai, args=(server.directory,),
+                     daemon=True).start()
 
     try:
         import webview
@@ -466,21 +804,56 @@ def main():
             pass
         return
 
-    window = webview.create_window(
-        "DropIt",
-        f"http://127.0.0.1:{args.port}",
-        width=1280,
-        height=800,
-        min_size=(720, 600),
-        js_api=Api(server),
-        hidden=args.minimized,
-    )
+    # v2.8.31 custom themed title bar (PC app only): the window goes
+    # FRAMELESS and Drop draws its own bar (logo + Drop left, custom
+    # minimise / maximise / close right -- see the #titlebar in
+    # dropit.py). Fallback safety: if this pywebview cannot do
+    # frameless, open a normal FRAMED window instead -- never a
+    # dead window with no way to close or move it. The page asks
+    # the bridge (is_frameless) and hides its custom bar when the
+    # fallback ran, so the native bar is the chrome then.
+    api = Api(server)
+    try:
+        # v2.8.34 (5): easy_drag=False -- pywebview's easy-drag
+        # mode (the DEFAULT for frameless windows) lets the
+        # window be moved by dragging ANY point, which is why
+        # click-and-hold anywhere -- including selecting text
+        # in a text preview -- moved the app, and why it
+        # jumped on clicks (the native easy-drag and the JS
+        # title-bar drag below fought over the same move).
+        # With easy_drag off, the ONLY drag path is the JS
+        # title-bar handler in dropit.py (mousedown on
+        # #titlebar -> move_window), so clicks, holds and
+        # text selection anywhere else never move the window.
+        window = webview.create_window(
+            "Drop",
+            f"http://127.0.0.1:{args.port}",
+            width=1280,
+            height=800,
+            min_size=(720, 600),
+            js_api=api,
+            hidden=args.minimized,
+            frameless=True,
+            easy_drag=False,
+        )
+        api.frameless = True
+    except Exception:  # noqa: BLE001
+        window = webview.create_window(
+            "Drop",
+            f"http://127.0.0.1:{args.port}",
+            width=1280,
+            height=800,
+            min_size=(720, 600),
+            js_api=api,
+            hidden=args.minimized,
+        )
+        api.frameless = False
 
     start_tray(server, window)
 
     # Minimize-to-tray: the minimize button hides the window to the tray.
     # Closing (X) exits the app for real. Reopen from the tray (double-click
-    # it or choose Open DropIt); quit from the tray menu.
+    # it or choose Open Drop); quit from the tray menu.
     def on_minimized():
         try:
             window.hide()
